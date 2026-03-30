@@ -1,0 +1,11 @@
+{
+  "name": "dokku-dashboard",
+  "description": "Simple Dokku projects dashboard",
+  "keywords": ["dokku", "dashboard"],
+  "env": {
+    "DASHBOARD_PASSWORD": {
+      "description": "Password for dashboard access",
+      "value": "changeme"
+    }
+  }
+}
