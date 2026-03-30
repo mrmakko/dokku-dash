@@ -2,4 +2,4 @@ WAIT=2
 TIMEOUT=10
 ATTEMPTS=3
 
-/login  302
+/login  Password
