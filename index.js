@@ -4,6 +4,7 @@ const bodyParser = require('body-parser');
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
+const { execSync } = require('child_process');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -49,6 +50,28 @@ function dockerGet(apiPath) {
   });
 }
 
+async function getContainerMemoryMB(containerId) {
+  try {
+    const stats = await dockerGet(`/containers/${containerId}/stats?stream=false`);
+    return (stats.memory_stats.usage / 1024 / 1024).toFixed(0);
+  } catch (e) {
+    return null;
+  }
+}
+
+function getLastCommit(appName) {
+  try {
+    const out = execSync(
+      `git -C ${path.join(DOKKU_ROOT, appName)} log -1 --format="%h|||%s|||%ar"`,
+      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }
+    ).trim();
+    const [hash, message, when] = out.split('|||');
+    return { hash, message, when };
+  } catch (e) {
+    return null;
+  }
+}
+
 async function getApps() {
   const filters = encodeURIComponent(JSON.stringify({ label: ['com.dokku.container-type=deploy'] }));
   const containers = await dockerGet(`/containers/json?all=1&filters=${filters}`);
@@ -59,7 +82,6 @@ async function getApps() {
     const name = c.Labels && c.Labels['com.dokku.app-name'];
     if (!name) continue;
     if (!appsMap.has(name) || c.State === 'running') {
-      // Get URL from openresty.domains label — prefer custom domain over auto-generated ones
       let url = '';
       const domains = c.Labels['openresty.domains'];
       if (domains) {
@@ -68,18 +90,27 @@ async function getApps() {
         const chosen = custom || domainList[0];
         if (chosen) url = `http://${chosen}`;
       }
-      appsMap.set(name, { state: c.State, url });
+      appsMap.set(name, { id: c.Id, state: c.State, uptime: c.Status, url });
     }
   }
 
-  const apps = [];
-  for (const [name, { state, url }] of appsMap) {
-    apps.push({
-      name,
-      status: state === 'running' ? 'running' : 'stopped',
-      url,
-    });
-  }
+  // Fetch memory + last commit in parallel per app
+  const apps = await Promise.all(
+    [...appsMap.entries()].map(async ([name, { id, state, uptime, url }]) => {
+      const [memoryMB, lastCommit] = await Promise.all([
+        state === 'running' ? getContainerMemoryMB(id) : Promise.resolve(null),
+        Promise.resolve(getLastCommit(name)),
+      ]);
+      return {
+        name,
+        status: state === 'running' ? 'running' : 'stopped',
+        uptime: state === 'running' ? uptime : null,
+        memoryMB,
+        lastCommit,
+        url,
+      };
+    })
+  );
 
   return apps.sort((a, b) => a.name.localeCompare(b.name));
 }

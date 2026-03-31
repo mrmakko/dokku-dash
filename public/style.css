@@ -109,11 +109,57 @@ h1 {
   box-shadow: 0 2px 12px rgba(100, 90, 140, 0.08);
 }
 
+.app-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 14px;
+}
+
 .app-name {
   font-size: 18px;
   font-weight: 600;
-  margin-bottom: 12px;
   color: var(--color-text-primary);
+}
+
+.app-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.meta-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.meta-label {
+  color: var(--color-text-faint);
+  min-width: 78px;
+  flex-shrink: 0;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.meta-value {
+  color: var(--color-text-muted);
+}
+
+.meta-value code {
+  font-family: monospace;
+  font-size: 12px;
+  background: var(--color-header-bg);
+  padding: 1px 5px;
+  border-radius: 3px;
+  color: var(--color-text-primary);
+}
+
+.meta-when {
+  color: var(--color-text-faint);
 }
 
 .app-status {
