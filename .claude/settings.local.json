@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s -c /tmp/cookies.txt -b /tmp/cookies.txt -X POST http://proofnest.org/login -H \"Content-Type: application/x-www-form-urlencoded\" -d \"password=makomako1\" -L)",
+      "Bash(curl -s -c /tmp/cookies.txt -b /tmp/cookies.txt http://proofnest.org/api/debug)",
+      "Bash(curl -s -c /tmp/cookies.txt -X POST \"http://proofnest.org/login\" -H \"Content-Type: application/x-www-form-urlencoded\" -d \"password=makomako1\" -L)",
+      "Bash(curl -s -b /tmp/cookies.txt \"http://proofnest.org/api/debug\")",
+      "Bash(ssh dokku@perf-vds \"dokku docker-options:report dashboard\")",
+      "Bash(ssh dokku@perf-vds \"dokku docker-options:show dashboard\")",
+      "Bash(ssh dokku@perf-vds -- docker-options)",
+      "Bash(ssh dokku@perf-vds -- domains:report dashboard)",
+      "Bash(ssh dokku@perf-vds -- domains:report polyscanner)"
+    ]
+  }
+}
