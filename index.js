@@ -148,21 +148,25 @@ app.get('/api/debug', isAuthenticated, async (_req, res) => {
   }
 
   try {
-    const filters = encodeURIComponent(JSON.stringify({ label: ['com.dokku.container-type=web'] }));
-    const containers = await dockerGet(`/containers/json?all=1&filters=${filters}`);
+    // No filter — list ALL containers to see what labels Dokku actually uses
+    const containers = await dockerGet(`/containers/json?all=1`);
     info.dockerApiOutput = containers.map(c => ({
-      name: c.Labels && c.Labels['com.dokku.app-name'],
+      name: c.Names,
       state: c.State,
+      labels: c.Labels,
     }));
   } catch (e) {
     info.dockerApiError = e.message;
   }
 
-  // Try direct VHOSTS read for 'dashboard' app as a sample
-  try {
-    info.vhostsSample = fs.readFileSync(`${DOKKU_ROOT}/dashboard/VHOSTS`, 'utf-8').trim();
-  } catch (e) {
-    info.vhostsSample = `ERROR: ${e.message}`;
+  // Check what files exist in each app dir
+  info.appDirContents = {};
+  for (const app of ['dashboard', 'polyscanner']) {
+    try {
+      info.appDirContents[app] = fs.readdirSync(`${DOKKU_ROOT}/${app}`);
+    } catch (e) {
+      info.appDirContents[app] = `ERROR: ${e.message}`;
+    }
   }
 
   res.json(info);
