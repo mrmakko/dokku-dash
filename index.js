@@ -65,10 +65,23 @@ function getApps() {
         status = 'error';
       }
 
+      let url = '';
+      try {
+        const vhostsPath = path.join(DOKKU_ROOT, item, 'VHOSTS');
+        if (fs.existsSync(vhostsPath)) {
+          const vhosts = fs.readFileSync(vhostsPath, 'utf-8').trim().split('\n').filter(Boolean);
+          if (vhosts.length > 0) {
+            url = `https://${vhosts[0]}`;
+          }
+        }
+      } catch (e) {
+        // leave url empty
+      }
+
       apps.push({
         name: item,
         status: status,
-        url: `https://${item}.217.25.92.17` // Update domain as needed
+        url: url
       });
     });
 
