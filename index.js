@@ -30,60 +30,65 @@ function isAuthenticated(req, res, next) {
   }
 }
 
-// Get list of Dokku apps with status
+function tryExec(cmd) {
+  try {
+    return execSync(cmd, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+  } catch (e) {
+    return null;
+  }
+}
+
+function getUrlForApp(name) {
+  // Try VHOSTS file if /home/dokku is mounted
+  try {
+    const vhostsPath = path.join(DOKKU_ROOT, name, 'VHOSTS');
+    if (fs.existsSync(vhostsPath)) {
+      const vhosts = fs.readFileSync(vhostsPath, 'utf-8').trim().split('\n').filter(Boolean);
+      if (vhosts.length > 0) return `https://${vhosts[0]}`;
+    }
+  } catch (e) {}
+  return '';
+}
+
+// Get list of Dokku apps with status — uses Docker socket as primary source
 function getApps() {
   try {
-    const apps = [];
+    const appsMap = new Map();
 
-    if (!fs.existsSync(DOKKU_ROOT)) {
-      return apps;
+    // Primary: query Docker for all Dokku web containers (running + stopped)
+    const dockerOut = tryExec(
+      `docker ps -a --filter 'label=com.dokku.container-type=web' --format '{{index .Labels "com.dokku.app-name"}}|{{.State}}'`
+    );
+
+    if (dockerOut) {
+      for (const line of dockerOut.split('\n')) {
+        const [name, state] = line.split('|');
+        if (!name) continue;
+        // Keep running state over stopped if app appears multiple times
+        if (!appsMap.has(name) || state === 'running') {
+          appsMap.set(name, state || 'stopped');
+        }
+      }
     }
 
-    const items = fs.readdirSync(DOKKU_ROOT);
+    // Fallback: read /home/dokku directory (works if volume is mounted)
+    if (appsMap.size === 0 && fs.existsSync(DOKKU_ROOT)) {
+      const SKIP = new Set(['plugins', 'services', '.git', 'tls']);
+      for (const item of fs.readdirSync(DOKKU_ROOT)) {
+        if (item.startsWith('.') || SKIP.has(item)) continue;
+        try {
+          if (!fs.statSync(path.join(DOKKU_ROOT, item)).isDirectory()) continue;
+        } catch (e) { continue; }
 
-    items.forEach(item => {
-      const itemPath = path.join(DOKKU_ROOT, item);
-      const stat = fs.statSync(itemPath);
-
-      // Skip if not a directory or if it's a hidden folder
-      if (!stat.isDirectory() || item.startsWith('.')) {
-        return;
+        const result = tryExec(`docker ps --filter 'label=com.dokku.app-name=${item}' --format '{{.State}}'`);
+        appsMap.set(item, result || 'stopped');
       }
+    }
 
-      // Skip dokku system folders
-      if (['plugins', 'services', '.git'].includes(item)) {
-        return;
-      }
-
-      let status = 'unknown';
-      try {
-        // Try to get container status
-        const result = execSync(`docker ps --filter "label=com.dokku.app-name=${item}" --format "{{.State}}" 2>/dev/null`,
-          { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
-        status = result || 'stopped';
-      } catch (e) {
-        status = 'error';
-      }
-
-      let url = '';
-      try {
-        const vhostsPath = path.join(DOKKU_ROOT, item, 'VHOSTS');
-        if (fs.existsSync(vhostsPath)) {
-          const vhosts = fs.readFileSync(vhostsPath, 'utf-8').trim().split('\n').filter(Boolean);
-          if (vhosts.length > 0) {
-            url = `https://${vhosts[0]}`;
-          }
-        }
-      } catch (e) {
-        // leave url empty
-      }
-
-      apps.push({
-        name: item,
-        status: status,
-        url: url
-      });
-    });
+    const apps = [];
+    for (const [name, status] of appsMap) {
+      apps.push({ name, status, url: getUrlForApp(name) });
+    }
 
     return apps.sort((a, b) => a.name.localeCompare(b.name));
   } catch (err) {
@@ -133,8 +138,38 @@ app.get('/api/apps', isAuthenticated, (req, res) => {
   res.json(apps);
 });
 
-app.post('/logout', isAuthenticated, (req, res) => {
-  req.session.authenticated = false;
+// Debug endpoint — shows raw diagnostic info (auth required)
+app.get('/api/debug', isAuthenticated, (req, res) => {
+  const info = {
+    dokkuRootExists: fs.existsSync(DOKKU_ROOT),
+    dokkuRootContents: null,
+    dockerSocketExists: fs.existsSync('/var/run/docker.sock'),
+    dockerPsOutput: null,
+    dockerPsError: null,
+  };
+
+  try {
+    if (info.dokkuRootExists) {
+      info.dokkuRootContents = fs.readdirSync(DOKKU_ROOT);
+    }
+  } catch (e) {
+    info.dokkuRootContents = `ERROR: ${e.message}`;
+  }
+
+  try {
+    info.dockerPsOutput = execSync(
+      `docker ps -a --filter 'label=com.dokku.container-type=web' --format '{{index .Labels "com.dokku.app-name"}}|{{.State}}'`,
+      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }
+    ).trim();
+  } catch (e) {
+    info.dockerPsError = e.message;
+  }
+
+  res.json(info);
+});
+
+app.post('/logout', isAuthenticated, (_req, res) => {
+  _req.session.authenticated = false;
   res.redirect('/login');
 });
 
