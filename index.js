@@ -49,18 +49,8 @@ function dockerGet(apiPath) {
   });
 }
 
-function getUrlForApp(name) {
-  // Direct path read — works even when scandir on /home/dokku is denied
-  try {
-    const vhostsPath = path.join(DOKKU_ROOT, name, 'VHOSTS');
-    const vhosts = fs.readFileSync(vhostsPath, 'utf-8').trim().split('\n').filter(Boolean);
-    if (vhosts.length > 0) return `https://${vhosts[0]}`;
-  } catch (e) {}
-  return '';
-}
-
 async function getApps() {
-  const filters = encodeURIComponent(JSON.stringify({ label: ['com.dokku.container-type=web'] }));
+  const filters = encodeURIComponent(JSON.stringify({ label: ['com.dokku.container-type=deploy'] }));
   const containers = await dockerGet(`/containers/json?all=1&filters=${filters}`);
 
   // Deduplicate by app name — prefer 'running' state
@@ -69,16 +59,25 @@ async function getApps() {
     const name = c.Labels && c.Labels['com.dokku.app-name'];
     if (!name) continue;
     if (!appsMap.has(name) || c.State === 'running') {
-      appsMap.set(name, c.State);
+      // Get URL from openresty.domains label — prefer custom domain over auto-generated ones
+      let url = '';
+      const domains = c.Labels['openresty.domains'];
+      if (domains) {
+        const domainList = domains.split(' ').filter(Boolean);
+        const custom = domainList.find(d => !d.includes('.4289301-'));
+        const chosen = custom || domainList[0];
+        if (chosen) url = `http://${chosen}`;
+      }
+      appsMap.set(name, { state: c.State, url });
     }
   }
 
   const apps = [];
-  for (const [name, state] of appsMap) {
+  for (const [name, { state, url }] of appsMap) {
     apps.push({
       name,
       status: state === 'running' ? 'running' : 'stopped',
-      url: getUrlForApp(name),
+      url,
     });
   }
 
