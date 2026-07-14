@@ -32,7 +32,12 @@ disabled; do not put literal values in a command copied into shell history.
 Create a named storage entry, mount it at the path used by the application,
 and configure production values:
 
-```sh
+The secret-entry block requires Bash attached to an interactive TTY. When
+connecting remotely, allocate one explicitly (for example,
+`ssh -t admin@dokku-host`) before running these commands. Do not run the block
+through a non-interactive script, pipe, or CI job.
+
+```bash
 dokku storage:create dashboard-metrics
 dokku storage:mount dashboard dashboard-metrics --container-dir /app/data
 set +o history
@@ -60,25 +65,24 @@ dokku config:keys dashboard
 dokku logs dashboard --tail
 ```
 
-Log in, request `/api/apps`, wait for at least one collection, and confirm that
-metrics are returned. Then capture a reproducible SQLite summary, restart, and
-capture it again:
+Log in, request `/api/apps`, wait for a fresh collection, and confirm that
+metrics are returned. Then capture the identity of one application sample from
+the last 20 minutes, restart, and assert that the exact row still exists:
 
-```sh
-BEFORE=$(dokku run dashboard node -e "const D=require('better-sqlite3')('/app/data/metrics.sqlite',{readonly:true}); console.log(JSON.stringify(D.prepare('SELECT COUNT(*) AS count, MIN(id) AS minId, MIN(timestamp) AS oldest FROM samples').get()))")
-printf 'before: %s\n' "$BEFORE"
+```bash
+MARKER=$(dokku run dashboard node -e "const D=require('better-sqlite3')('/app/data/metrics.sqlite',{readonly:true}); const r=D.prepare(\"SELECT id,timestamp FROM samples WHERE scope='app' AND timestamp>=? ORDER BY id DESC LIMIT 1\").get(Date.now()-20*60*1000); if(!r) throw new Error('no recent application sample; wait for collection'); console.log(r.id+':'+r.timestamp)")
+printf 'sample before restart: %s\n' "$MARKER"
 dokku ps:restart dashboard
-AFTER=$(dokku run dashboard node -e "const D=require('better-sqlite3')('/app/data/metrics.sqlite',{readonly:true}); console.log(JSON.stringify(D.prepare('SELECT COUNT(*) AS count, MIN(id) AS minId, MIN(timestamp) AS oldest FROM samples').get()))")
-printf 'after:  %s\n' "$AFTER"
+dokku run dashboard node -e "const D=require('better-sqlite3')('/app/data/metrics.sqlite',{readonly:true}); const p=process.argv[1].split(':').map(Number); const r=D.prepare('SELECT 1 FROM samples WHERE id=? AND timestamp=?').get(p[0],p[1]); if(!r) throw new Error('sample did not survive restart'); console.log('sample preserved')" "$MARKER"
 ```
 
-The `before` result must have `count` greater than zero. Immediately after the
-restart, `after.minId` and `after.oldest` must equal their `before` values, and
-`after.count` must be at least `before.count` (a collector run may add rows).
-Also confirm the same history through `/api/apps`. The one-off `run` container
-receives run-phase storage mounts, so it sees the same `/app/data` path as the
-web process. Never delete or recreate the storage entry as a troubleshooting
-step: that can destroy the metrics history.
+The final command must print `sample preserved`; otherwise it exits non-zero.
+This checks one known recent row, so normal retention cleanup and new collector
+writes cannot create a false failure. Also confirm the same history through
+`/api/apps`. The one-off `run` container receives run-phase storage mounts, so
+it sees the same `/app/data` path as the web process. Never delete or recreate
+the storage entry as a troubleshooting step: that can destroy the metrics
+history.
 
 Include the named storage entry in host backups. SQLite backups must be
 transactionally consistent: stop the app briefly before copying the database,
