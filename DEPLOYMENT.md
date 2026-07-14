@@ -10,15 +10,22 @@ domain from the first command as `CURRENT_DOMAIN`; this runbook intentionally
 does not guess it.
 
 ```sh
+dokku version
 dokku domains:report dashboard
 dokku storage:report dashboard
 dokku config:keys dashboard
 dokku plugin:list
 ```
 
+The named-storage commands below require Dokku 0.38.0 or newer. Stop and
+upgrade Dokku first if `dokku version` reports an older release; do not replace
+the commands with an ad-hoc host bind mount, because that would make this
+runbook's backup and recovery procedure inaccurate.
+
 Do not paste secret values into tickets or logs. Generate a new, long random
 `SESSION_SECRET` with a trusted password generator and retain the existing
-dashboard password.
+dashboard password. Enter both secrets interactively with shell history
+disabled; do not put literal values in a command copied into shell history.
 
 ## Persistent metrics storage and configuration
 
@@ -28,9 +35,20 @@ and configure production values:
 ```sh
 dokku storage:create dashboard-metrics
 dokku storage:mount dashboard dashboard-metrics --container-dir /app/data
-dokku config:set dashboard NODE_ENV=production METRICS_DB_PATH=/app/data/metrics.sqlite SESSION_SECRET='<NEW_RANDOM_SECRET>' DASHBOARD_PASSWORD='<EXISTING_PASSWORD>'
+set +o history
+read -r -s -p 'New SESSION_SECRET: ' SESSION_SECRET; printf '\n'
+read -r -s -p 'Existing DASHBOARD_PASSWORD: ' DASHBOARD_PASSWORD; printf '\n'
+dokku config:set dashboard NODE_ENV=production METRICS_DB_PATH=/app/data/metrics.sqlite SESSION_SECRET="$SESSION_SECRET" DASHBOARD_PASSWORD="$DASHBOARD_PASSWORD"
+unset SESSION_SECRET DASHBOARD_PASSWORD
+set -o history
 dokku ps:restart dashboard
 ```
+
+Run this only in a private, trusted administrator session. Interactive `read`
+keeps literal secrets out of shell history, and `unset` removes the shell
+variables afterward. Like most environment-variable CLIs, `config:set` may
+briefly expose its arguments to privileged local process inspection; avoid a
+shared host session and rotate either secret if exposure is suspected.
 
 `config:set` normally restarts the application, but the explicit restart also
 ensures the newly attached mount is active. Confirm the attachment and config
@@ -42,20 +60,25 @@ dokku config:keys dashboard
 dokku logs dashboard --tail
 ```
 
-Log in, request `/api/apps`, wait for a collection, and confirm that metrics
-are returned. Then record the database checksum or file metadata, restart the
-application, and confirm the same database still exists and its history is
-still visible:
+Log in, request `/api/apps`, wait for at least one collection, and confirm that
+metrics are returned. Then capture a reproducible SQLite summary, restart, and
+capture it again:
 
 ```sh
-dokku run dashboard ls -l /app/data/metrics.sqlite
+BEFORE=$(dokku run dashboard node -e "const D=require('better-sqlite3')('/app/data/metrics.sqlite',{readonly:true}); console.log(JSON.stringify(D.prepare('SELECT COUNT(*) AS count, MIN(id) AS minId, MIN(timestamp) AS oldest FROM samples').get()))")
+printf 'before: %s\n' "$BEFORE"
 dokku ps:restart dashboard
-dokku run dashboard ls -l /app/data/metrics.sqlite
+AFTER=$(dokku run dashboard node -e "const D=require('better-sqlite3')('/app/data/metrics.sqlite',{readonly:true}); console.log(JSON.stringify(D.prepare('SELECT COUNT(*) AS count, MIN(id) AS minId, MIN(timestamp) AS oldest FROM samples').get()))")
+printf 'after:  %s\n' "$AFTER"
 ```
 
-The one-off `run` container receives run-phase storage mounts, so it sees the
-same `/app/data` path as the web process. Never delete or recreate the storage
-entry as a troubleshooting step: that can destroy the metrics history.
+The `before` result must have `count` greater than zero. Immediately after the
+restart, `after.minId` and `after.oldest` must equal their `before` values, and
+`after.count` must be at least `before.count` (a collector run may add rows).
+Also confirm the same history through `/api/apps`. The one-off `run` container
+receives run-phase storage mounts, so it sees the same `/app/data` path as the
+web process. Never delete or recreate the storage entry as a troubleshooting
+step: that can destroy the metrics history.
 
 Include the named storage entry in host backups. SQLite backups must be
 transactionally consistent: stop the app briefly before copying the database,
@@ -67,8 +90,14 @@ into a separate location.
 
 Keep `CURRENT_DOMAIN` available until every check below passes.
 
-1. From `dokku domains:report dashboard`, save the actual existing hostname as
-   `CURRENT_DOMAIN`. Do not substitute an assumed main domain.
+1. From `dokku domains:report dashboard`, save the actual existing hostname in
+   a quoted shell variable. Replace the example value with the hostname only,
+   without a scheme, path, whitespace, or shell metacharacters:
+
+   ```sh
+   CURRENT_DOMAIN='actual-existing-hostname.example'
+   printf 'Old hostname retained for rollback: %s\n' "$CURRENT_DOMAIN"
+   ```
 2. Create the DNS record for `dokku.proofnest.org` pointing to the Dokku host.
    Wait until public DNS resolution returns the intended address.
 3. Add the new hostname without replacing the old one:
@@ -100,7 +129,7 @@ Keep `CURRENT_DOMAIN` available until every check below passes.
 6. Only after all checks pass, remove the recorded old hostname:
 
    ```sh
-   dokku domains:remove dashboard <CURRENT_DOMAIN>
+   dokku domains:remove dashboard "$CURRENT_DOMAIN"
    dokku domains:report dashboard
    ```
 
@@ -109,7 +138,7 @@ using it while correcting DNS, TLS, or application configuration. If a problem
 is discovered immediately after removal, restore it with:
 
 ```sh
-dokku domains:add dashboard <CURRENT_DOMAIN>
+dokku domains:add dashboard "$CURRENT_DOMAIN"
 ```
 
 ## References

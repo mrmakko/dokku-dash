@@ -13,7 +13,7 @@
     },
     "METRICS_DB_PATH": {
       "description": "SQLite metrics database on persistent storage",
-      "value": "/app/data/metrics.sqlite"
+      "required": true
     }
   }
 }
