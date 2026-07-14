@@ -127,6 +127,37 @@ test('docker client rejects non-success responses with status and response messa
   await assert.rejects(() => dockerGet('/containers/json', { port: fake.address().port }), /500.*daemon failed/);
 });
 
+test('docker client destroys a stalled request after the configured timeout', async t => {
+  const { dockerGet } = require('../index');
+  const stalled = http.createServer(() => {});
+  await new Promise(resolve => stalled.listen(0, resolve));
+  t.after(() => { stalled.closeAllConnections(); stalled.close(); });
+  await assert.rejects(
+    () => dockerGet('/containers/slow/stats', { port: stalled.address().port }, 20),
+    /Docker request timed out after 20ms.*\/containers\/slow\/stats/,
+  );
+});
+
+test('a timed-out Docker stats request cannot wedge dashboard shutdown', async t => {
+  const { dockerGet } = require('../index');
+  const stalled = http.createServer(() => {});
+  await new Promise(resolve => stalled.listen(0, resolve));
+  t.after(() => { stalled.closeAllConnections(); stalled.close(); });
+  const collector = new MetricsCollector({
+    listContainers: async () => [{ Id: 'slow', State: 'running', Labels: { 'com.dokku.app-name': 'alpha' } }],
+    getStats: id => dockerGet(`/containers/${id}/stats`, { port: stalled.address().port }, 20),
+    store: { recordRun() {} }, logger: { info() {}, error() {} },
+  });
+  const dashboard = createDashboard({
+    env: { SESSION_SECRET: 'test' }, collector,
+    store: { close() {} },
+  });
+  const collection = collector.collect();
+  await assert.doesNotReject(dashboard.close());
+  const result = await collection;
+  assert.equal(result.failures, 1);
+});
+
 test('shutdown waits for collection stop before closing SQLite lifecycle dependencies', async () => {
   const order = [];
   let release;

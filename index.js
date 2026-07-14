@@ -13,7 +13,7 @@ const { MetricsCollector } = require('./lib/metrics-collector');
 const DOKKU_ROOT = '/home/dokku';
 const DOCKER_SOCKET = '/var/run/docker.sock';
 
-function dockerGet(apiPath, connection = { socketPath: DOCKER_SOCKET }) {
+function dockerGet(apiPath, connection = { socketPath: DOCKER_SOCKET }, timeoutMs = 10000) {
   return new Promise((resolve, reject) => {
     const request = http.request({ ...connection, path: apiPath, method: 'GET' }, response => {
       let data = '';
@@ -30,6 +30,9 @@ function dockerGet(apiPath, connection = { socketPath: DOCKER_SOCKET }) {
       });
     });
     request.on('error', reject);
+    request.setTimeout(timeoutMs, () => {
+      request.destroy(new Error(`Docker request timed out after ${timeoutMs}ms: ${apiPath}`));
+    });
     request.end();
   });
 }
@@ -52,8 +55,10 @@ function createDashboard(options = {}) {
   const env = options.env || process.env;
   if (env.NODE_ENV === 'production' && !env.SESSION_SECRET) throw new Error('SESSION_SECRET is required in production');
   if (env.NODE_ENV === 'production' && !env.METRICS_DB_PATH) throw new Error('METRICS_DB_PATH is required in production');
-  const listContainers = options.listContainers || (() => dockerGet(`/containers/json?all=1&filters=${deployFilters()}`));
-  const getStats = options.getStats || (id => dockerGet(`/containers/${id}/stats?stream=false`));
+  const configuredTimeout = Number(options.dockerRequestTimeoutMs ?? env.DOCKER_REQUEST_TIMEOUT_MS);
+  const dockerRequestTimeoutMs = Number.isFinite(configuredTimeout) && configuredTimeout > 0 ? configuredTimeout : 10000;
+  const listContainers = options.listContainers || (() => dockerGet(`/containers/json?all=1&filters=${deployFilters()}`, { socketPath: DOCKER_SOCKET }, dockerRequestTimeoutMs));
+  const getStats = options.getStats || (id => dockerGet(`/containers/${id}/stats?stream=false`, { socketPath: DOCKER_SOCKET }, dockerRequestTimeoutMs));
   const getLastCommit = options.getLastCommit || defaultGetLastCommit;
   const store = options.store || new MetricsStore(env.METRICS_DB_PATH || path.join(__dirname, 'metrics.sqlite'));
   const collector = options.collector || new MetricsCollector({ listContainers, getStats, store });
