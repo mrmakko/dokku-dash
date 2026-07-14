@@ -483,6 +483,24 @@ input:focus {
     margin-top: 20px;
   }
 
+  .header-content {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .header-controls {
+    flex: 1 1 180px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .refresh-status {
+    flex-basis: 100%;
+    justify-content: flex-end;
+    order: 2;
+  }
+
   .app-card {
     padding: 16px;
   }

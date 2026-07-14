@@ -94,7 +94,7 @@ test('dashboard header owns refresh controls and an accessible live status', () 
 });
 
 test('refresh keeps rendered cards visible, prevents overlap, and reports failures in the header', async () => {
-  const container = { innerHTML: '<div class="apps-grid">existing cards</div>' };
+  const container = { innerHTML: '<div class="loading">Loading projects...</div>' };
   const status = { textContent: '', className: '', hidden: true };
   const button = { disabled: false };
   global.document = { getElementById(id) {
@@ -106,24 +106,58 @@ test('refresh keeps rendered cards visible, prevents overlap, and reports failur
   console.error = () => {};
   global.fetch = () => {
     fetchCalls++;
+    if (fetchCalls === 1) return Promise.resolve({ ok: true, json: async () => [{ name: 'existing', status: 'running' }] });
     return new Promise((resolve, reject) => { rejectFetch = reject; });
   };
 
+  await loadApps();
   const first = loadApps();
   const overlapping = loadApps();
-  assert.equal(fetchCalls, 1);
-  assert.match(container.innerHTML, /existing cards/);
+  assert.equal(fetchCalls, 2);
+  assert.match(container.innerHTML, /existing/);
   assert.equal(button.disabled, true);
   assert.equal(status.hidden, false);
   assert.equal(status.textContent, 'Refreshing…');
 
   rejectFetch(new Error('offline'));
   await Promise.all([first, overlapping]);
-  assert.match(container.innerHTML, /existing cards/);
+  assert.match(container.innerHTML, /existing/);
   assert.equal(button.disabled, false);
   assert.equal(status.hidden, false);
   assert.equal(status.textContent, 'Refresh failed');
   console.error = originalConsoleError;
   delete global.document;
   delete global.fetch;
+});
+
+test('refresh preserves a successfully rendered empty state', async () => {
+  const container = { innerHTML: '<div class="loading">Loading projects...</div>' };
+  const status = { textContent: '', className: '', hidden: true };
+  const button = { disabled: false };
+  global.document = { getElementById(id) {
+    return { 'apps-container': container, 'refresh-status': status, 'refresh-button': button }[id];
+  } };
+  let resolveRefresh;
+  let fetchCalls = 0;
+  global.fetch = () => {
+    fetchCalls++;
+    if (fetchCalls === 1) return Promise.resolve({ ok: true, json: async () => [] });
+    return new Promise(resolve => { resolveRefresh = resolve; });
+  };
+
+  await loadApps();
+  assert.match(container.innerHTML, /No projects deployed yet/);
+  const refresh = loadApps();
+  assert.match(container.innerHTML, /No projects deployed yet/);
+  assert.doesNotMatch(container.innerHTML, /Loading projects/);
+  resolveRefresh({ ok: true, json: async () => [] });
+  await refresh;
+  delete global.document;
+  delete global.fetch;
+});
+
+test('header controls wrap without overflowing narrow screens', () => {
+  const css = fs.readFileSync(path.join(__dirname, '../public/style.css'), 'utf8');
+  assert.match(css, /@media \(max-width: 560px\)[\s\S]*?\.header-content\s*{[^}]*flex-wrap:\s*wrap/);
+  assert.match(css, /@media \(max-width: 560px\)[\s\S]*?\.header-controls\s*{[^}]*flex-wrap:\s*wrap/);
 });

@@ -132,6 +132,7 @@ function renderApps(apps, now = Date.now()) {
 }
 
 let activeLoad = null;
+let hasSuccessfulRender = false;
 
 function setRefreshState(state) {
   const status = document.getElementById('refresh-status');
@@ -146,17 +147,17 @@ function setRefreshState(state) {
 function loadApps() {
   if (activeLoad) return activeLoad;
   const container = document.getElementById('apps-container');
-  const hasRenderedCards = /class="apps-grid"/.test(container.innerHTML);
-  if (!hasRenderedCards) container.innerHTML = '<div class="loading">Loading projects...</div>';
+  if (!hasSuccessfulRender) container.innerHTML = '<div class="loading">Loading projects...</div>';
   setRefreshState('loading');
   activeLoad = (async () => {
     try {
       const response = await fetch('/api/apps');
       if (!response.ok) throw new Error(`Request failed with ${response.status}`);
       container.innerHTML = renderApps(await response.json(), Date.now());
+      hasSuccessfulRender = true;
       setRefreshState('idle');
     } catch (error) {
-      if (!hasRenderedCards) container.innerHTML = '<div class="empty">Error loading projects</div>';
+      if (!hasSuccessfulRender) container.innerHTML = '<div class="empty">Error loading projects</div>';
       setRefreshState('error');
       console.error(error);
     } finally {
