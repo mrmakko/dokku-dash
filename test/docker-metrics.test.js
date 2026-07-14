@@ -48,6 +48,13 @@ test('subtracts cgroup v2 inactive file cache and ignores non-finite limits', ()
   assert.deepEqual(calculateMemory({}), { memoryBytes: null, memoryLimitBytes: null });
 });
 
+test('reports a finite memory limit when memory usage is unavailable', () => {
+  assert.deepEqual(calculateMemory({ memory_stats: { limit: 4096 } }), {
+    memoryBytes: null,
+    memoryLimitBytes: 4096,
+  });
+});
+
 test('extracts stable Dokku container identity', () => {
   assert.deepEqual(containerIdentity({
     Id: 'abcdef1234567890',
