@@ -31,8 +31,9 @@ function formatMemory(value, limit) {
   return usage === 'Unavailable' || !finiteNumber(limit) ? usage : `${usage} / ${formatBytes(limit)}`;
 }
 
-function renderSparkline(history, field, label) {
-  const rows = Array.isArray(history) ? history : [];
+function renderSparkline(history, field, label, now = Date.now()) {
+  const windowStart = now - 24 * 60 * 60 * 1000;
+  const rows = (Array.isArray(history) ? history : []).filter(row => finiteNumber(row && row.timestamp) && row.timestamp >= windowStart && row.timestamp <= now);
   const valid = rows.filter(row => finiteNumber(row && row.timestamp) && finiteNumber(row[field]));
   const width = 320;
   const height = 64;
@@ -40,11 +41,8 @@ function renderSparkline(history, field, label) {
     return `<svg class="sparkline sparkline-empty" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(label)}: no data"><text x="160" y="36" text-anchor="middle">No data yet</text></svg>`;
   }
 
-  const timestamps = rows.map(row => row && row.timestamp).filter(finiteNumber);
-  const minTime = Math.min(...timestamps);
-  const maxTime = Math.max(...timestamps);
   const maxValue = Math.max(...valid.map(row => row[field]), 1);
-  const x = timestamp => maxTime === minTime ? width / 2 : ((timestamp - minTime) / (maxTime - minTime)) * width;
+  const x = timestamp => ((timestamp - windowStart) / (now - windowStart)) * width;
   const y = value => height - 3 - (value / maxValue) * (height - 6);
   const segments = [];
   let segment = [];
@@ -94,7 +92,7 @@ function renderContainers(appName, containers) {
   </details>`;
 }
 
-function renderAppCard(app) {
+function renderAppCard(app, now = Date.now()) {
   const metrics = app.metrics || {};
   const current = metrics.current || {};
   const peaks = metrics.peaks7d || {};
@@ -120,17 +118,17 @@ function renderAppCard(app) {
       ${renderMetric('7-day RAM peak', formatBytes(peaks.memoryBytes))}
     </div>
     <div class="charts">
-      <figure><figcaption>CPU · 24 hours</figcaption>${renderSparkline(history, 'cpuPercent', 'CPU usage over 24 hours')}</figure>
-      <figure><figcaption>RAM · 24 hours</figcaption>${renderSparkline(history, 'memoryBytes', 'RAM usage over 24 hours')}</figure>
+      <figure><figcaption>CPU · 24 hours</figcaption>${renderSparkline(history, 'cpuPercent', 'CPU usage over 24 hours', now)}</figure>
+      <figure><figcaption>RAM · 24 hours</figcaption>${renderSparkline(history, 'memoryBytes', 'RAM usage over 24 hours', now)}</figure>
     </div>
     ${renderContainers(app.name, containers)}
     ${url ? `<div class="app-url"><a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(url)}</a></div>` : ''}
   </article>`;
 }
 
-function renderApps(apps) {
+function renderApps(apps, now = Date.now()) {
   if (!apps.length) return '<div class="empty">No projects deployed yet</div>';
-  return `<div class="apps-grid">${apps.map(renderAppCard).join('')}</div>`;
+  return `<div class="apps-grid">${apps.map(app => renderAppCard(app, now)).join('')}</div>`;
 }
 
 async function loadApps() {
@@ -139,7 +137,7 @@ async function loadApps() {
   try {
     const response = await fetch('/api/apps');
     if (!response.ok) throw new Error(`Request failed with ${response.status}`);
-    container.innerHTML = renderApps(await response.json());
+    container.innerHTML = renderApps(await response.json(), Date.now());
   } catch (error) {
     container.innerHTML = '<div class="empty">Error loading projects</div>';
     console.error(error);

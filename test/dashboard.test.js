@@ -26,10 +26,21 @@ test('sparkline creates separate SVG paths around null and missing samples', () 
     { timestamp: 1800000, cpuPercent: 30 },
     { timestamp: 3600000, cpuPercent: 40 },
   ];
-  const svg = renderSparkline(history, 'cpuPercent', 'CPU usage over 24 hours');
+  const svg = renderSparkline(history, 'cpuPercent', 'CPU usage over 24 hours', 24 * 60 * 60 * 1000);
   assert.match(svg, /<svg[^>]+role="img"[^>]+aria-label="CPU usage over 24 hours"/);
   assert.equal((svg.match(/<path /g) || []).length, 3);
   assert.doesNotMatch(svg, /NaN|undefined/);
+});
+
+test('sparkline uses a fixed 24-hour axis ending at the injected current time', () => {
+  const now = Date.UTC(2026, 6, 14, 12);
+  const svg = renderSparkline([
+    { timestamp: now - 20 * 60 * 1000, cpuPercent: 10 },
+    { timestamp: now - 10 * 60 * 1000, cpuPercent: 20 },
+  ], 'cpuPercent', 'CPU usage over 24 hours', now);
+  const path = svg.match(/<path d="([^"]+)"/)[1];
+  assert.match(path, /^M 315\.6 /);
+  assert.match(path, /L 317\.8 /);
 });
 
 test('app card escapes application, status, URL, deploy, and container data', () => {
