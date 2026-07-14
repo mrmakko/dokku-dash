@@ -56,6 +56,25 @@ test('returns at most 144 ten-minute samples and excludes the exact 24-hour boun
   assert.equal(history.at(-1).timestamp, now);
 }));
 
+test('downsamples restart samples to the latest point in each ten-minute bucket', () => withStore((store) => {
+  const now = Date.UTC(2026, 6, 14, 12);
+  for (let offset = 23 * 60 + 50; offset >= 0; offset -= 10) {
+    const timestamp = now - offset * 60 * 1000;
+    store.recordRun(timestamp, [appSample(offset, offset)]);
+    if (offset >= 20 && offset <= 40) {
+      store.recordRun(timestamp + 60 * 1000, [appSample(offset + 0.5, offset + 1)]);
+    }
+  }
+
+  const history = store.getAppMetrics('alpha', now).history24h;
+  assert.equal(history.length, 144);
+  assert.ok(history.every((point, index) => index === 0 || point.timestamp > history[index - 1].timestamp));
+  assert.equal(history[0].timestamp, now - (23 * 60 + 50) * 60 * 1000);
+  assert.ok(history.some((point) => point.timestamp === now - 19 * 60 * 1000));
+  assert.ok(!history.some((point) => point.timestamp === now - 20 * 60 * 1000));
+  assert.equal(history.at(-1).timestamp, now);
+}));
+
 test('does not use samples from the future as current metrics', () => withStore((store) => {
   const now = Date.UTC(2026, 6, 14, 12);
   store.recordRun(now, [appSample(5, 50)]);
