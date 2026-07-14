@@ -64,7 +64,8 @@ test('a stats failure records nulls for that container and continues the run', a
   const result = await collector.collect();
   assert.equal(result.failures, 1);
   assert.equal(writes[0][0].cpuPercent, null);
-  assert.ok(Math.abs(writes[0][2].cpuPercent - 7) < Number.EPSILON * 10);
+  assert.ok(Math.abs(writes[0][1].cpuPercent - 7) < Number.EPSILON * 10);
+  assert.equal(writes[0][2].cpuPercent, null);
 });
 
 test('overlapping collection is skipped', async () => {
@@ -80,18 +81,55 @@ test('overlapping collection is skipped', async () => {
   await first;
 });
 
-test('start schedules an immediate collection and recurring ten-minute runs, stop clears it', async () => {
-  const scheduled = [];
-  let cleared;
+test('start schedules fixed ten-minute ticks so a slow run causes the overlap lock to skip', async () => {
+  const timeouts = [];
+  const intervals = [];
+  let release;
   const collector = new MetricsCollector({
-    listContainers: async () => [], getStats: async () => {}, store: { recordRun() {} },
-    setTimeout: (fn, delay) => { scheduled.push({ fn, delay }); return 42; },
-    clearTimeout: id => { cleared = id; }, intervalMs: 600000, startupDelayMs: 100,
+    listContainers: () => new Promise(resolve => { release = resolve; }), getStats: async () => {}, store: { recordRun() {} },
+    setTimeout: (fn, delay) => { timeouts.push({ fn, delay }); return 41; },
+    setInterval: (fn, delay) => { intervals.push({ fn, delay }); return 42; },
+    clearTimeout() {}, clearInterval() {}, intervalMs: 600000, startupDelayMs: 100,
   });
   collector.start();
-  assert.equal(scheduled[0].delay, 100);
-  await scheduled[0].fn();
-  assert.equal(scheduled[1].delay, 600000);
-  collector.stop();
-  assert.equal(cleared, 42);
+  assert.equal(timeouts[0].delay, 100);
+  assert.equal(intervals[0].delay, 600000);
+  const first = timeouts[0].fn();
+  assert.deepEqual(await intervals[0].fn(), { skipped: true });
+  release([]);
+  await first;
+  await collector.stop();
+});
+
+test('an unavailable running contributor makes only its missing aggregate fields null', async () => {
+  const writes = [];
+  const collector = new MetricsCollector({
+    listContainers: async () => [container('partial', 'alpha', 'web'), container('good', 'alpha', 'worker')],
+    getStats: async id => id === 'partial'
+      ? { cpu_stats: stats(2, 1).cpu_stats, precpu_stats: stats(2, 1).precpu_stats, memory_stats: {} }
+      : stats(3, 30),
+    store: { recordRun: (_timestamp, samples) => writes.push(samples) },
+  });
+  await collector.collect();
+  const aggregate = writes[0].at(-1);
+  assert.equal(aggregate.cpuPercent, 5);
+  assert.equal(aggregate.memoryBytes, null);
+  assert.equal(aggregate.memoryLimitBytes, null);
+});
+
+test('stop waits for the active collection before returning', async () => {
+  let release;
+  const collector = new MetricsCollector({
+    listContainers: () => new Promise(resolve => { release = resolve; }),
+    getStats: async () => {}, store: { recordRun() {} },
+  });
+  const collection = collector.collect();
+  let stopped = false;
+  const stopping = collector.stop().then(() => { stopped = true; });
+  await Promise.resolve();
+  assert.equal(stopped, false);
+  release([]);
+  await collection;
+  await stopping;
+  assert.equal(stopped, true);
 });

@@ -13,13 +13,20 @@ const { MetricsCollector } = require('./lib/metrics-collector');
 const DOKKU_ROOT = '/home/dokku';
 const DOCKER_SOCKET = '/var/run/docker.sock';
 
-function dockerGet(apiPath) {
+function dockerGet(apiPath, connection = { socketPath: DOCKER_SOCKET }) {
   return new Promise((resolve, reject) => {
-    const request = http.request({ socketPath: DOCKER_SOCKET, path: apiPath, method: 'GET' }, response => {
+    const request = http.request({ ...connection, path: apiPath, method: 'GET' }, response => {
       let data = '';
       response.on('data', chunk => { data += chunk; });
       response.on('end', () => {
-        try { resolve(JSON.parse(data)); } catch (_error) { reject(new Error(`Docker returned invalid JSON: ${data.slice(0, 200)}`)); }
+        let parsed;
+        try { parsed = JSON.parse(data); } catch (_error) {
+          reject(new Error(`Docker returned ${response.statusCode}: invalid JSON: ${data.slice(0, 200)}`)); return;
+        }
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          reject(new Error(`Docker returned ${response.statusCode}: ${parsed.message || response.statusMessage || 'request failed'}`)); return;
+        }
+        resolve(parsed);
       });
     });
     request.on('error', reject);
@@ -44,6 +51,7 @@ function deployFilters() {
 function createDashboard(options = {}) {
   const env = options.env || process.env;
   if (env.NODE_ENV === 'production' && !env.SESSION_SECRET) throw new Error('SESSION_SECRET is required in production');
+  if (env.NODE_ENV === 'production' && !env.METRICS_DB_PATH) throw new Error('METRICS_DB_PATH is required in production');
   const listContainers = options.listContainers || (() => dockerGet(`/containers/json?all=1&filters=${deployFilters()}`));
   const getStats = options.getStats || (id => dockerGet(`/containers/${id}/stats?stream=false`));
   const getLastCommit = options.getLastCommit || defaultGetLastCommit;
@@ -67,28 +75,47 @@ function createDashboard(options = {}) {
   async function getApps() {
     const containers = await listContainers();
     const appsMap = new Map();
+    const containersByApp = new Map();
     for (const container of containers) {
       const name = container.Labels && container.Labels['com.dokku.app-name'];
       if (!name) continue;
+      if (!containersByApp.has(name)) containersByApp.set(name, []);
+      containersByApp.get(name).push(container);
       let appData = appsMap.get(name);
       if (!appData || (appData.state !== 'running' && container.State === 'running')) {
         const domains = container.Labels['openresty.domains'];
         const domainList = domains ? domains.split(' ').filter(Boolean) : [];
         const chosen = domainList.find(domain => !domain.includes('.4289301-')) || domainList[0];
-        appData = { id: container.Id, state: container.State, uptime: container.Status, url: chosen ? `https://${chosen}` : '' };
+        const tls = ['true', 'yes', 'enabled', '1'].includes(String(container.Labels['openresty.ssl'] || '').toLowerCase())
+          || Boolean(container.Labels['com.dokku.letsencrypt.enabled']);
+        appData = { id: container.Id, state: container.State, uptime: container.Status, url: chosen ? `${tls ? 'https' : 'http'}://${chosen}` : '' };
         appsMap.set(name, appData);
       }
     }
-    const now = Date.now();
+    const now = options.now ? options.now() : Date.now();
     const apps = await Promise.all([...appsMap.entries()].map(async ([name, data]) => {
       let memoryMB = null;
       if (data.state === 'running') {
         try { const stats = await getStats(data.id); memoryMB = (stats.memory_stats.usage / 1024 / 1024).toFixed(0); } catch (_error) {}
       }
+      const metrics = store.getAppMetrics(name, now);
+      const storedContainers = new Map(metrics.containers.map(container => [container.containerId, container]));
+      metrics.containers = containersByApp.get(name).map(container => {
+        const stored = storedContainers.get(container.Id) || {};
+        return {
+          containerId: container.Id,
+          processName: (container.Labels && container.Labels['com.dokku.process-type']) || stored.processName || null,
+          state: container.State || null,
+          timestamp: stored.timestamp ?? null,
+          cpuPercent: stored.cpuPercent ?? null,
+          memoryBytes: stored.memoryBytes ?? null,
+          memoryLimitBytes: stored.memoryLimitBytes ?? null,
+        };
+      });
       return {
         name, status: data.state === 'running' ? 'running' : 'stopped',
         uptime: data.state === 'running' ? data.uptime : null, memoryMB,
-        lastCommit: getLastCommit(name), url: data.url, metrics: store.getAppMetrics(name, now),
+        lastCommit: getLastCommit(name), url: data.url, metrics,
       };
     }));
     return apps.sort((left, right) => left.name.localeCompare(right.name));
@@ -113,14 +140,17 @@ function createDashboard(options = {}) {
 
   collector.start();
   let closed = false;
-  return { app, collector, store, getApps, close() { if (closed) return; closed = true; collector.stop(); store.close(); } };
+  return { app, collector, store, getApps, async close() { if (closed) return; closed = true; await collector.stop(); store.close(); } };
 }
 
 function startServer(options = {}) {
   const dashboard = createDashboard(options);
   const port = (options.env || process.env).PORT || 5000;
   const server = dashboard.app.listen(port, () => console.log(`Dashboard running on port ${port}`));
-  const shutdown = () => { server.close(() => dashboard.close()); };
+  const shutdown = async () => {
+    await dashboard.close();
+    server.close();
+  };
   process.once('SIGTERM', shutdown);
   process.once('SIGINT', shutdown);
   return { ...dashboard, server };
