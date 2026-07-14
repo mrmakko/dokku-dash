@@ -11,8 +11,11 @@ does not guess it.
 
 ```sh
 dokku version
+dokku builder:report dashboard
+dokku run dashboard id
 dokku domains:report dashboard
 dokku storage:report dashboard
+dokku storage:list-entries
 dokku config:keys dashboard
 dokku plugin:list
 ```
@@ -29,8 +32,17 @@ disabled; do not put literal values in a command copied into shell history.
 
 ## Persistent metrics storage and configuration
 
-Create a named storage entry, mount it at the path used by the application,
-and configure production values:
+Use `builder:report` and the UID/GID printed by `dokku run dashboard id` to
+select Dokku's storage ownership mode. For the standard Herokuish buildpack
+runtime use `herokuish` (UID 32767); for Heroku CNB use `heroku` (UID 1000);
+for Paketo CNB use `paketo` (UID 2000); and for a root-running Docker image use
+`root`. A custom numeric runtime UID can be passed directly. The selected mode
+must match the effective application user shown by `id`.
+
+Set `STORAGE_CHOWN` to that verified mode, create the named entry with explicit
+ownership, mount it, and prove that a one-off application process can write to
+the mount. The value below is correct only when preflight identified the
+standard Herokuish runtime:
 
 The secret-entry block requires Bash attached to an interactive TTY. When
 connecting remotely, allocate one explicitly (for example,
@@ -38,8 +50,10 @@ connecting remotely, allocate one explicitly (for example,
 through a non-interactive script, pipe, or CI job.
 
 ```bash
-dokku storage:create dashboard-metrics
-dokku storage:mount dashboard dashboard-metrics --container-dir /app/data
+STORAGE_CHOWN='herokuish'
+dokku storage:create dashboard-metrics --chown "$STORAGE_CHOWN"
+dokku storage:mount dashboard dashboard-metrics --container-dir /app/data --volume-chown "$STORAGE_CHOWN"
+dokku run dashboard sh -c 'touch /app/data/.dashboard-write-test && rm /app/data/.dashboard-write-test'
 set +o history
 read -r -s -p 'New SESSION_SECRET: ' SESSION_SECRET; printf '\n'
 read -r -s -p 'Existing DASHBOARD_PASSWORD: ' DASHBOARD_PASSWORD; printf '\n'
@@ -48,6 +62,22 @@ unset SESSION_SECRET DASHBOARD_PASSWORD
 set -o history
 dokku ps:restart dashboard
 ```
+
+The write test must exit successfully before setting production config,
+restarting, or deploying. It runs as the same application user and uses the
+same run-phase mount as the web process. If `dashboard-metrics` already appeared
+in `storage:list-entries`, do not recreate it. Preserve its data, correct its
+ownership using the verified mode, then repeat the write test:
+
+```bash
+STORAGE_CHOWN='herokuish'
+dokku storage:mount dashboard dashboard-metrics --container-dir /app/data --volume-chown "$STORAGE_CHOWN"
+dokku run dashboard sh -c 'touch /app/data/.dashboard-write-test && rm /app/data/.dashboard-write-test'
+```
+
+If the write probe still fails, stop here. Compare the output of
+`dokku storage:info dashboard-metrics` with `dokku run dashboard id`. Do not
+work around ownership with world-writable permissions.
 
 Run this only in a private, trusted administrator session. Interactive `read`
 keeps literal secrets out of shell history, and `unset` removes the shell
