@@ -131,17 +131,41 @@ function renderApps(apps, now = Date.now()) {
   return `<div class="apps-grid">${apps.map(app => renderAppCard(app, now)).join('')}</div>`;
 }
 
-async function loadApps() {
+let activeLoad = null;
+
+function setRefreshState(state) {
+  const status = document.getElementById('refresh-status');
+  const button = document.getElementById('refresh-button');
+  if (button) button.disabled = state === 'loading';
+  if (!status) return;
+  status.className = `refresh-status refresh-status-${state}`;
+  status.hidden = state === 'idle';
+  status.textContent = state === 'loading' ? 'Refreshing…' : state === 'error' ? 'Refresh failed' : '';
+}
+
+function loadApps() {
+  if (activeLoad) return activeLoad;
   const container = document.getElementById('apps-container');
-  container.innerHTML = '<div class="loading">Loading projects...</div>';
-  try {
-    const response = await fetch('/api/apps');
-    if (!response.ok) throw new Error(`Request failed with ${response.status}`);
-    container.innerHTML = renderApps(await response.json(), Date.now());
-  } catch (error) {
-    container.innerHTML = '<div class="empty">Error loading projects</div>';
-    console.error(error);
-  }
+  const hasRenderedCards = /class="apps-grid"/.test(container.innerHTML);
+  if (!hasRenderedCards) container.innerHTML = '<div class="loading">Loading projects...</div>';
+  setRefreshState('loading');
+  activeLoad = (async () => {
+    try {
+      const response = await fetch('/api/apps');
+      if (!response.ok) throw new Error(`Request failed with ${response.status}`);
+      container.innerHTML = renderApps(await response.json(), Date.now());
+      setRefreshState('idle');
+    } catch (error) {
+      if (!hasRenderedCards) container.innerHTML = '<div class="empty">Error loading projects</div>';
+      setRefreshState('error');
+      console.error(error);
+    } finally {
+      activeLoad = null;
+      const button = document.getElementById('refresh-button');
+      if (button) button.disabled = false;
+    }
+  })();
+  return activeLoad;
 }
 
 async function logout() {

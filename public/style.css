@@ -58,6 +58,42 @@ h1 {
   color: var(--color-text-primary);
 }
 
+.header-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.refresh-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+
+.refresh-status-loading::before {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--color-border-strong);
+  border-top-color: var(--color-link);
+  border-radius: 50%;
+  content: '';
+  animation: refresh-spin 0.7s linear infinite;
+}
+
+.refresh-status-error {
+  color: var(--color-status-stop-fg);
+}
+
+@keyframes refresh-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .refresh-status-loading::before { animation: none; }
+}
+
 /* ── Buttons ── */
 
 .btn {
@@ -76,16 +112,17 @@ h1 {
   border-color: var(--color-border-hover);
 }
 
+.btn:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
 /* ── Layout ── */
 
 .container {
   max-width: 1200px;
   margin: 30px auto;
   padding: 0 20px;
-}
-
-.toolbar {
-  margin-bottom: 20px;
 }
 
 /* ── App grid ── */

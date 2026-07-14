@@ -10,14 +10,15 @@
   <div class="header">
     <div class="header-content">
       <h1>Projects</h1>
-      <button class="btn" onclick="logout()">Logout</button>
+      <div class="header-controls">
+        <span id="refresh-status" class="refresh-status refresh-status-idle" role="status" aria-live="polite" hidden></span>
+        <button id="refresh-button" class="btn" onclick="loadApps()">Refresh</button>
+        <button class="btn" onclick="logout()">Logout</button>
+      </div>
     </div>
   </div>
 
   <div class="container">
-    <div class="toolbar">
-      <button class="btn" onclick="loadApps()">Refresh</button>
-    </div>
     <div id="apps-container" class="loading">Loading projects...</div>
   </div>
 

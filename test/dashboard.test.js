@@ -2,12 +2,15 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const {
   escapeHtml,
   formatCpu,
   formatBytes,
   renderSparkline,
   renderAppCard,
+  loadApps,
 } = require('../public/dashboard');
 
 test('formats CPU, memory, and unavailable values for cards', () => {
@@ -80,4 +83,47 @@ test('app card includes accessible expandable current container details', () => 
   assert.match(html, /<th scope="col">Process<\/th>/);
   assert.match(html, /web[\s\S]*running[\s\S]*3\.0%[\s\S]*1\.0 MB \/ 2\.0 MB/);
   assert.match(html, /worker[\s\S]*exited[\s\S]*Unavailable/);
+});
+
+test('dashboard header owns refresh controls and an accessible live status', () => {
+  const html = fs.readFileSync(path.join(__dirname, '../public/dashboard.html'), 'utf8');
+  assert.match(html, /class="header-controls"/);
+  assert.match(html, /id="refresh-status"[^>]+role="status"[^>]+aria-live="polite"/);
+  assert.match(html, /id="refresh-button"[^>]+onclick="loadApps\(\)"[^>]*>Refresh<\/button>/);
+  assert.doesNotMatch(html, /class="toolbar"/);
+});
+
+test('refresh keeps rendered cards visible, prevents overlap, and reports failures in the header', async () => {
+  const container = { innerHTML: '<div class="apps-grid">existing cards</div>' };
+  const status = { textContent: '', className: '', hidden: true };
+  const button = { disabled: false };
+  global.document = { getElementById(id) {
+    return { 'apps-container': container, 'refresh-status': status, 'refresh-button': button }[id];
+  } };
+  let rejectFetch;
+  let fetchCalls = 0;
+  const originalConsoleError = console.error;
+  console.error = () => {};
+  global.fetch = () => {
+    fetchCalls++;
+    return new Promise((resolve, reject) => { rejectFetch = reject; });
+  };
+
+  const first = loadApps();
+  const overlapping = loadApps();
+  assert.equal(fetchCalls, 1);
+  assert.match(container.innerHTML, /existing cards/);
+  assert.equal(button.disabled, true);
+  assert.equal(status.hidden, false);
+  assert.equal(status.textContent, 'Refreshing…');
+
+  rejectFetch(new Error('offline'));
+  await Promise.all([first, overlapping]);
+  assert.match(container.innerHTML, /existing cards/);
+  assert.equal(button.disabled, false);
+  assert.equal(status.hidden, false);
+  assert.equal(status.textContent, 'Refresh failed');
+  console.error = originalConsoleError;
+  delete global.document;
+  delete global.fetch;
 });
