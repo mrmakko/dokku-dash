@@ -6,7 +6,7 @@ const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
 const fs = require('node:fs');
-const { createDashboard } = require('../index');
+const { createDashboard, shutdownDashboard } = require('../index');
 const { MetricsStore } = require('../lib/metrics-store');
 const { MetricsCollector } = require('../lib/metrics-collector');
 
@@ -84,8 +84,10 @@ test('uses HTTP without a TLS label and HTTPS when TLS is enabled', async () => 
     store: { getAppMetrics: () => ({ current: null, peaks7d: {}, history24h: [], containers: [] }), close() {} }, collector: { start() {}, stop() {} }, getLastCommit: () => null,
   });
   const plain = make({}); const secure = make({ 'openresty.ssl': 'true' });
+  const disabledLetsEncrypt = make({ 'com.dokku.letsencrypt.enabled': 'false' });
   assert.equal((await plain.getApps())[0].url, 'http://alpha.test');
   assert.equal((await secure.getApps())[0].url, 'https://alpha.test');
+  assert.equal((await disabledLetsEncrypt.getApps())[0].url, 'http://alpha.test');
 });
 
 test('container metrics mirror current Docker discovery and exclude stale stored containers', async () => {
@@ -134,4 +136,23 @@ test('shutdown waits for collection stop before closing SQLite lifecycle depende
   release();
   await closing;
   assert.deepEqual(order, ['stop', 'close']);
+});
+
+test('dashboard closes the store even when collector shutdown rejects', async () => {
+  let closed = 0;
+  const dashboard = createDashboard({
+    env: { SESSION_SECRET: 'secret' },
+    store: { close: () => { closed++; } },
+    collector: { start() {}, stop: async () => { throw new Error('collector failed'); } },
+  });
+  await assert.rejects(dashboard.close(), /collector failed/);
+  assert.equal(closed, 1);
+});
+
+test('signal shutdown closes the HTTP server even when dashboard cleanup rejects', async () => {
+  let serverClosed = 0;
+  const server = { close: () => { serverClosed++; } };
+  const dashboard = { close: async () => { throw new Error('cleanup failed'); } };
+  await assert.rejects(shutdownDashboard(server, dashboard), /cleanup failed/);
+  assert.equal(serverClosed, 1);
 });

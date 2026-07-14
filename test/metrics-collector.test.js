@@ -133,3 +133,17 @@ test('stop waits for the active collection before returning', async () => {
   await stopping;
   assert.equal(stopped, true);
 });
+
+test('stop settles an active collection rejection instead of rejecting cleanup', async () => {
+  let rejectCollection;
+  const collector = new MetricsCollector({
+    listContainers: () => new Promise((_resolve, reject) => { rejectCollection = reject; }),
+    getStats: async () => {}, store: { recordRun() {} },
+    logger: { error() {}, info() {} },
+  });
+  const collection = collector.collect();
+  const stopping = collector.stop();
+  rejectCollection(new Error('docker disappeared'));
+  await assert.rejects(collection, /docker disappeared/);
+  await assert.doesNotReject(stopping);
+});

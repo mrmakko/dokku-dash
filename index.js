@@ -86,8 +86,9 @@ function createDashboard(options = {}) {
         const domains = container.Labels['openresty.domains'];
         const domainList = domains ? domains.split(' ').filter(Boolean) : [];
         const chosen = domainList.find(domain => !domain.includes('.4289301-')) || domainList[0];
-        const tls = ['true', 'yes', 'enabled', '1'].includes(String(container.Labels['openresty.ssl'] || '').toLowerCase())
-          || Boolean(container.Labels['com.dokku.letsencrypt.enabled']);
+        const enabledValues = ['true', 'yes', 'enabled', '1'];
+        const tls = enabledValues.includes(String(container.Labels['openresty.ssl'] || '').toLowerCase())
+          || enabledValues.includes(String(container.Labels['com.dokku.letsencrypt.enabled'] || '').toLowerCase());
         appData = { id: container.Id, state: container.State, uptime: container.Status, url: chosen ? `${tls ? 'https' : 'http'}://${chosen}` : '' };
         appsMap.set(name, appData);
       }
@@ -140,17 +141,25 @@ function createDashboard(options = {}) {
 
   collector.start();
   let closed = false;
-  return { app, collector, store, getApps, async close() { if (closed) return; closed = true; await collector.stop(); store.close(); } };
+  return { app, collector, store, getApps, async close() {
+    if (closed) return;
+    closed = true;
+    try { await collector.stop(); } finally { store.close(); }
+  } };
+}
+
+async function shutdownDashboard(server, dashboard) {
+  try { await dashboard.close(); } finally { server.close(); }
 }
 
 function startServer(options = {}) {
   const dashboard = createDashboard(options);
   const port = (options.env || process.env).PORT || 5000;
   const server = dashboard.app.listen(port, () => console.log(`Dashboard running on port ${port}`));
-  const shutdown = async () => {
-    await dashboard.close();
-    server.close();
-  };
+  const shutdown = () => shutdownDashboard(server, dashboard).catch(error => {
+    console.error(`Dashboard shutdown failed: ${error.message}`);
+    process.exitCode = 1;
+  });
   process.once('SIGTERM', shutdown);
   process.once('SIGINT', shutdown);
   return { ...dashboard, server };
@@ -158,4 +167,4 @@ function startServer(options = {}) {
 
 if (require.main === module) startServer();
 
-module.exports = { createDashboard, startServer, dockerGet };
+module.exports = { createDashboard, startServer, shutdownDashboard, dockerGet };
