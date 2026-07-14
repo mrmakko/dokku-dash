@@ -5,7 +5,15 @@
   "env": {
     "DASHBOARD_PASSWORD": {
       "description": "Password for dashboard access",
-      "value": "changeme"
+      "required": true
+    },
+    "SESSION_SECRET": {
+      "description": "Long random secret used to sign dashboard sessions (required in production)",
+      "required": true
+    },
+    "METRICS_DB_PATH": {
+      "description": "SQLite metrics database on persistent storage",
+      "value": "/app/data/metrics.sqlite"
     }
   }
 }
