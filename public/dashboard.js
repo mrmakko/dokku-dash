@@ -31,19 +31,27 @@ function formatMemory(value, limit) {
   return usage === 'Unavailable' || !finiteNumber(limit) ? usage : `${usage} / ${formatBytes(limit)}`;
 }
 
+function formatAxisValue(value, field) {
+  if (field === 'cpuPercent') return `${Number(value.toFixed(1))}%`;
+  return formatBytes(value);
+}
+
 function renderSparkline(history, field, label, now = Date.now()) {
   const windowStart = now - 24 * 60 * 60 * 1000;
   const rows = (Array.isArray(history) ? history : []).filter(row => finiteNumber(row && row.timestamp) && row.timestamp >= windowStart && row.timestamp <= now);
   const valid = rows.filter(row => finiteNumber(row && row.timestamp) && finiteNumber(row[field]));
   const width = 320;
-  const height = 64;
+  const height = 72;
+  const plot = { left: 48, right: 4, top: 5, bottom: 9 };
   if (!valid.length) {
-    return `<svg class="sparkline sparkline-empty" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(label)}: no data"><text x="160" y="36" text-anchor="middle">No data yet</text></svg>`;
+    return `<svg class="sparkline sparkline-empty" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(label)}: no data"><text x="160" y="39" text-anchor="middle">No data yet</text></svg>`;
   }
 
   const maxValue = Math.max(...valid.map(row => row[field]), 1);
-  const x = timestamp => ((timestamp - windowStart) / (now - windowStart)) * width;
-  const y = value => height - 3 - (value / maxValue) * (height - 6);
+  const plotWidth = width - plot.left - plot.right;
+  const plotHeight = height - plot.top - plot.bottom;
+  const x = timestamp => plot.left + ((timestamp - windowStart) / (now - windowStart)) * plotWidth;
+  const y = value => plot.top + (1 - value / maxValue) * plotHeight;
   const segments = [];
   let segment = [];
   let previousTimestamp = null;
@@ -68,11 +76,16 @@ function renderSparkline(history, field, label, now = Date.now()) {
     const commands = points.map((row, index) => `${index ? 'L' : 'M'} ${x(row.timestamp).toFixed(1)} ${y(row[field]).toFixed(1)}`).join(' ');
     return `<path d="${commands}" vector-effect="non-scaling-stroke"></path>`;
   }).join('');
-  return `<svg class="sparkline" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="${escapeHtml(label)}">${paths}</svg>`;
+  const ticks = [maxValue, maxValue / 2, 0].map(value => {
+    const tickY = y(value);
+    return `<g class="sparkline-tick"><line x1="${plot.left}" y1="${tickY.toFixed(1)}" x2="${width - plot.right}" y2="${tickY.toFixed(1)}"></line><text x="${plot.left - 5}" y="${tickY.toFixed(1)}" text-anchor="end" dominant-baseline="middle">${escapeHtml(formatAxisValue(value, field))}</text></g>`;
+  }).join('');
+  const scaleLabel = `vertical scale 0 to ${formatAxisValue(maxValue, field)}`;
+  return `<svg class="sparkline" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(`${label}, ${scaleLabel}`)}">${ticks}${paths}</svg>`;
 }
 
-function renderMetric(label, value) {
-  return `<div class="metric"><span class="metric-label">${label}</span><strong class="metric-value">${escapeHtml(value)}</strong></div>`;
+function renderMetric(label, value, detail = '') {
+  return `<div class="metric"><span class="metric-label">${label}</span><strong class="metric-value">${escapeHtml(value)}</strong>${detail ? `<small class="metric-detail">${escapeHtml(detail)}</small>` : ''}</div>`;
 }
 
 function renderContainers(appName, containers) {
@@ -113,7 +126,7 @@ function renderAppCard(app, now = Date.now()) {
     ${metaRows.length ? `<div class="app-meta">${metaRows.join('')}</div>` : ''}
     <div class="metrics-grid">
       ${renderMetric('Current CPU', formatCpu(current.cpuPercent))}
-      ${renderMetric('Current RAM', formatMemory(current.memoryBytes, current.memoryLimitBytes))}
+      ${renderMetric('Current RAM used', formatBytes(current.memoryBytes), finiteNumber(current.memoryLimitBytes) ? `Limit: ${formatBytes(current.memoryLimitBytes)}` : '')}
       ${renderMetric('7-day CPU peak', formatCpu(peaks.cpuPercent))}
       ${renderMetric('7-day RAM peak', formatBytes(peaks.memoryBytes))}
     </div>

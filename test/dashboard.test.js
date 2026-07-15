@@ -30,9 +30,21 @@ test('sparkline creates separate SVG paths around null and missing samples', () 
     { timestamp: 3600000, cpuPercent: 40 },
   ];
   const svg = renderSparkline(history, 'cpuPercent', 'CPU usage over 24 hours', 24 * 60 * 60 * 1000);
-  assert.match(svg, /<svg[^>]+role="img"[^>]+aria-label="CPU usage over 24 hours"/);
+  assert.match(svg, /<svg[^>]+role="img"[^>]+aria-label="CPU usage over 24 hours, vertical scale 0 to 40%"/);
   assert.equal((svg.match(/<path /g) || []).length, 3);
+  assert.match(svg, /vertical scale 0 to 40%/);
+  assert.match(svg, />20%<\/text>/);
   assert.doesNotMatch(svg, /NaN|undefined/);
+});
+
+test('RAM sparkline labels its vertical axis using readable byte units', () => {
+  const now = Date.UTC(2026, 6, 14, 12);
+  const svg = renderSparkline([
+    { timestamp: now - 600000, memoryBytes: 1024 * 1024 * 512 },
+  ], 'memoryBytes', 'RAM usage over 24 hours', now);
+  assert.match(svg, /vertical scale 0 to 512\.0 MB/);
+  assert.match(svg, />256\.0 MB<\/text>/);
+  assert.match(svg, />0 B<\/text>/);
 });
 
 test('sparkline uses a fixed 24-hour axis ending at the injected current time', () => {
@@ -42,8 +54,8 @@ test('sparkline uses a fixed 24-hour axis ending at the injected current time', 
     { timestamp: now - 10 * 60 * 1000, cpuPercent: 20 },
   ], 'cpuPercent', 'CPU usage over 24 hours', now);
   const path = svg.match(/<path d="([^"]+)"/)[1];
-  assert.match(path, /^M 315\.6 /);
-  assert.match(path, /L 317\.8 /);
+  assert.match(path, /^M 312\.3 /);
+  assert.match(path, /L 314\.1 /);
 });
 
 test('app card escapes application, status, URL, deploy, and container data', () => {
@@ -64,7 +76,7 @@ test('app card renders current and weekly aggregate metrics as plain numbers', (
     peaks7d: { cpuPercent: 88.8, memoryBytes: 209715200 }, history24h: [], containers: [],
   } });
   assert.match(html, /Current CPU[\s\S]*25\.3%/);
-  assert.match(html, /Current RAM[\s\S]*100\.0 MB \/ 512\.0 MB/);
+  assert.match(html, /Current RAM used[\s\S]*100\.0 MB[\s\S]*Limit: 512\.0 MB/);
   assert.match(html, /7-day CPU peak[\s\S]*88\.8%/);
   assert.match(html, /7-day RAM peak[\s\S]*200\.0 MB/);
   assert.equal((html.match(/<svg/g) || []).length, 2);
