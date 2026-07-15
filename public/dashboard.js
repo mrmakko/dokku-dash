@@ -150,7 +150,9 @@ let hasSuccessfulRender = false;
 function setRefreshState(state) {
   const status = document.getElementById('refresh-status');
   const button = document.getElementById('refresh-button');
+  const container = document.getElementById('apps-container');
   if (button) button.disabled = state === 'loading';
+  if (container && container.classList) container.classList.toggle('is-refreshing', state === 'loading');
   if (!status) return;
   status.className = `refresh-status refresh-status-${state}`;
   status.hidden = state === 'idle';

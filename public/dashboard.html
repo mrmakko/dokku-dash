@@ -6,19 +6,24 @@
   <title>Dokku Dashboard</title>
   <link rel="stylesheet" href="/style.css">
 </head>
-<body>
+<body class="dashboard-page">
   <div class="header">
     <div class="header-content">
-      <h1>Projects</h1>
+      <div class="brand-block">
+        <div class="eyebrow"><span class="eyebrow-mark"></span> DOKKU / CONTROL PLANE</div>
+        <h1>Project fleet</h1>
+        <p class="header-subtitle">Live deployment overview <span class="subtle-divider">/</span> auto-refresh 30s</p>
+      </div>
       <div class="header-controls">
         <span id="refresh-status" class="refresh-status refresh-status-idle" role="status" aria-live="polite" hidden></span>
-        <button id="refresh-button" class="btn" onclick="loadApps()">Refresh</button>
-        <button class="btn" onclick="logout()">Logout</button>
+        <button id="refresh-button" class="btn btn-primary" onclick="loadApps()"><span class="button-icon">↻</span> Refresh</button>
+        <button class="btn btn-ghost" onclick="logout()">Logout</button>
       </div>
     </div>
   </div>
 
   <div class="container">
+    <div class="section-intro"><span class="section-label">DEPLOYED PROJECTS</span><span class="section-line"></span><span class="section-hint">SYSTEM STATUS</span></div>
     <div id="apps-container" class="loading">Loading projects...</div>
   </div>
 
