@@ -57,7 +57,8 @@ function createDashboard(options = {}) {
   if (env.NODE_ENV === 'production' && !env.METRICS_DB_PATH) throw new Error('METRICS_DB_PATH is required in production');
   const configuredTimeout = Number(options.dockerRequestTimeoutMs ?? env.DOCKER_REQUEST_TIMEOUT_MS);
   const dockerRequestTimeoutMs = Number.isFinite(configuredTimeout) && configuredTimeout > 0 ? configuredTimeout : 10000;
-  const listContainers = options.listContainers || (() => dockerGet(`/containers/json?all=1&filters=${deployFilters()}`, { socketPath: DOCKER_SOCKET }, dockerRequestTimeoutMs));
+  const listContainers = options.listContainers || (() => dockerGet(`/containers/json?all=1&size=1&filters=${deployFilters()}`, { socketPath: DOCKER_SOCKET }, dockerRequestTimeoutMs));
+  const getStorageUsage = options.getStorageUsage || (() => dockerGet('/system/df?type=volume', { socketPath: DOCKER_SOCKET }, dockerRequestTimeoutMs));
   const getStats = options.getStats || (id => dockerGet(`/containers/${id}/stats?stream=false`, { socketPath: DOCKER_SOCKET }, dockerRequestTimeoutMs));
   const getLastCommit = options.getLastCommit || defaultGetLastCommit;
   const store = options.store || new MetricsStore(env.METRICS_DB_PATH || path.join(__dirname, 'metrics.sqlite'));
@@ -78,7 +79,13 @@ function createDashboard(options = {}) {
   }
 
   async function getApps() {
-    const containers = await listContainers();
+    const [containers, diskUsage] = await Promise.all([
+      listContainers(),
+      getStorageUsage().catch(() => null),
+    ]);
+    const cacheBytesByApp = new Map(((diskUsage && diskUsage.Volumes) || [])
+      .filter(volume => typeof volume.Name === 'string' && volume.Name.startsWith('cache-'))
+      .map(volume => [volume.Name.slice('cache-'.length), volume.UsageData && Number.isFinite(volume.UsageData.Size) && volume.UsageData.Size >= 0 ? volume.UsageData.Size : null]));
     const appsMap = new Map();
     const containersByApp = new Map();
     for (const container of containers) {
@@ -116,12 +123,20 @@ function createDashboard(options = {}) {
           cpuPercent: stored.cpuPercent ?? null,
           memoryBytes: stored.memoryBytes ?? null,
           memoryLimitBytes: stored.memoryLimitBytes ?? null,
+          diskWritableBytes: Number.isFinite(container.SizeRw) && container.SizeRw >= 0 ? container.SizeRw : null,
+          diskRootFsBytes: Number.isFinite(container.SizeRootFs) && container.SizeRootFs >= 0 ? container.SizeRootFs : null,
         };
       });
+      const writableSizes = metrics.containers.map(container => container.diskWritableBytes).filter(Number.isFinite);
       return {
         name, status: data.state === 'running' ? 'running' : 'stopped',
         uptime: data.state === 'running' ? data.uptime : null, memoryMB,
-        lastCommit: getLastCommit(name), url: data.url, metrics,
+        lastCommit: getLastCommit(name), url: data.url,
+        storage: {
+          containerWritableBytes: writableSizes.length ? writableSizes.reduce((total, size) => total + size, 0) : null,
+          cacheBytes: cacheBytesByApp.get(name) ?? null,
+        },
+        metrics,
       };
     }));
     return apps.sort((left, right) => left.name.localeCompare(right.name));

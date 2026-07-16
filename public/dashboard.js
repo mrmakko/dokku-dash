@@ -95,11 +95,13 @@ function renderContainers(appName, containers) {
     <td>${escapeHtml(container.state || 'unknown')}</td>
     <td>${escapeHtml(formatCpu(container.cpuPercent))}</td>
     <td>${escapeHtml(formatMemory(container.memoryBytes, container.memoryLimitBytes))}</td>
+    <td>${escapeHtml(formatBytes(container.diskWritableBytes))}</td>
+    <td>${escapeHtml(formatBytes(container.diskRootFsBytes))}</td>
   </tr>`).join('');
   return `<details class="container-details">
     <summary>Containers (${containers.length})</summary>
     <div class="table-scroll"><table><caption class="sr-only">Current container metrics for ${escapeHtml(appName)}</caption>
-      <thead><tr><th scope="col">Process</th><th scope="col">State</th><th scope="col">CPU</th><th scope="col">RAM / limit</th></tr></thead>
+      <thead><tr><th scope="col">Process</th><th scope="col">State</th><th scope="col">CPU</th><th scope="col">RAM / limit</th><th scope="col">Writable disk</th><th scope="col">Root filesystem</th></tr></thead>
       <tbody>${rows}</tbody>
     </table></div>
   </details>`;
@@ -111,6 +113,7 @@ function renderAppCard(app, now = Date.now()) {
   const peaks = metrics.peaks7d || {};
   const history = metrics.history24h || [];
   const containers = metrics.containers || [];
+  const storage = app.storage || {};
   const metaRows = [];
   if (app.uptime) metaRows.push(`<div class="meta-row"><span class="meta-label">Uptime</span><span class="meta-value">${escapeHtml(app.uptime)}</span></div>`);
   if (app.lastCommit) {
@@ -129,6 +132,8 @@ function renderAppCard(app, now = Date.now()) {
       ${renderMetric('Current RAM used', formatBytes(current.memoryBytes), finiteNumber(current.memoryLimitBytes) ? `Limit: ${formatBytes(current.memoryLimitBytes)}` : '')}
       ${renderMetric('7-day CPU peak', formatCpu(peaks.cpuPercent))}
       ${renderMetric('7-day RAM peak', formatBytes(peaks.memoryBytes))}
+      ${renderMetric('Container writable disk', formatBytes(storage.containerWritableBytes))}
+      ${renderMetric('Build cache', formatBytes(storage.cacheBytes))}
     </div>
     <div class="charts">
       <figure><figcaption>CPU · 24 hours</figcaption>${renderSparkline(history, 'cpuPercent', 'CPU usage over 24 hours', now)}</figure>

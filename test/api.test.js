@@ -30,6 +30,7 @@ test('authenticated apps API preserves fields and serializes missing metrics as 
       'com.dokku.app-name': 'alpha', 'openresty.domains': 'alpha.example.com', 'openresty.ssl': 'true',
     } }],
     getStats: async () => ({ memory_stats: { usage: 1048576 } }),
+    getStorageUsage: async () => ({ Volumes: [{ Name: 'cache-alpha', UsageData: { Size: 2048 } }] }),
     getLastCommit: () => null,
     store: { getAppMetrics: () => metrics, recordRun() {}, close() {} },
     collector: { start() {}, stop() {} },
@@ -41,8 +42,9 @@ test('authenticated apps API preserves fields and serializes missing metrics as 
   const response = await request(server, { path: '/api/apps', headers: { cookie } });
   assert.equal(response.status, 200);
   const [app] = JSON.parse(response.body);
-  assert.deepEqual(Object.keys(app), ['name', 'status', 'uptime', 'memoryMB', 'lastCommit', 'url', 'metrics']);
+  assert.deepEqual(Object.keys(app), ['name', 'status', 'uptime', 'memoryMB', 'lastCommit', 'url', 'storage', 'metrics']);
   assert.equal(app.url, 'https://alpha.example.com');
+  assert.deepEqual(app.storage, { containerWritableBytes: null, cacheBytes: 2048 });
   assert.deepEqual(app.metrics, metrics);
 });
 
@@ -92,12 +94,45 @@ test('uses HTTP without a TLS label and HTTPS when TLS is enabled', async () => 
 
 test('container metrics mirror current Docker discovery and exclude stale stored containers', async () => {
   const dashboard = createDashboard({
-    env: { SESSION_SECRET: 'test' }, listContainers: async () => [{ Id: 'new', State: 'running', Status: 'Up', Labels: { 'com.dokku.app-name': 'alpha', 'com.dokku.process-type': 'web' } }],
+    env: { SESSION_SECRET: 'test' }, listContainers: async () => [{ Id: 'new', State: 'running', Status: 'Up', SizeRw: 1024, SizeRootFs: 4096, Labels: { 'com.dokku.app-name': 'alpha', 'com.dokku.process-type': 'web' } }],
     getStats: async () => ({ memory_stats: { usage: 1 } }), getLastCommit: () => null,
     store: { getAppMetrics: () => ({ current: null, peaks7d: {}, history24h: [], containers: [{ containerId: 'stale', cpuPercent: 9 }] }), close() {} }, collector: { start() {}, stop() {} },
   });
   const containers = (await dashboard.getApps())[0].metrics.containers;
-  assert.deepEqual(containers, [{ containerId: 'new', processName: 'web', state: 'running', timestamp: null, cpuPercent: null, memoryBytes: null, memoryLimitBytes: null }]);
+  assert.deepEqual(containers, [{ containerId: 'new', processName: 'web', state: 'running', timestamp: null, cpuPercent: null, memoryBytes: null, memoryLimitBytes: null, diskWritableBytes: 1024, diskRootFsBytes: 4096 }]);
+  assert.deepEqual((await dashboard.getApps())[0].storage, { containerWritableBytes: 1024, cacheBytes: null });
+});
+
+test('storage usage sums writable layers and maps each Dokku build cache volume', async () => {
+  const dashboard = createDashboard({
+    env: { SESSION_SECRET: 'test' },
+    listContainers: async () => [
+      { Id: 'web', State: 'running', SizeRw: 100, SizeRootFs: 1000, Labels: { 'com.dokku.app-name': 'alpha' } },
+      { Id: 'worker', State: 'running', SizeRw: 200, SizeRootFs: 1100, Labels: { 'com.dokku.app-name': 'alpha' } },
+    ],
+    getStorageUsage: async () => ({ Volumes: [
+      { Name: 'cache-alpha', UsageData: { Size: 900 } },
+      { Name: 'dashboard-metrics', UsageData: { Size: 999 } },
+    ] }),
+    getStats: async () => ({ memory_stats: { usage: 1 } }), getLastCommit: () => null,
+    store: { getAppMetrics: () => ({ current: null, peaks7d: {}, history24h: [], containers: [] }), close() {} },
+    collector: { start() {}, stop() {} },
+  });
+  const [app] = await dashboard.getApps();
+  assert.deepEqual(app.storage, { containerWritableBytes: 300, cacheBytes: 900 });
+  assert.deepEqual(app.metrics.containers.map(container => [container.diskWritableBytes, container.diskRootFsBytes]), [[100, 1000], [200, 1100]]);
+});
+
+test('storage metrics degrade to null when Docker disk usage is unavailable', async () => {
+  const dashboard = createDashboard({
+    env: { SESSION_SECRET: 'test' },
+    listContainers: async () => [{ Id: 'one', State: 'exited', Labels: { 'com.dokku.app-name': 'alpha' } }],
+    getStorageUsage: async () => { throw new Error('disk scan failed'); }, getLastCommit: () => null,
+    store: { getAppMetrics: () => ({ current: null, peaks7d: {}, history24h: [], containers: [] }), close() {} },
+    collector: { start() {}, stop() {} },
+  });
+  const [app] = await dashboard.getApps();
+  assert.deepEqual(app.storage, { containerWritableBytes: null, cacheBytes: null });
 });
 
 test('collector samples flow through SQLite into the authenticated apps API', async t => {
