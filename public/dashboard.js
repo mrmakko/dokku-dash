@@ -162,17 +162,24 @@ function setRefreshState(state) {
 function loadApps() {
   if (activeLoad) return activeLoad;
   const container = document.getElementById('apps-container');
-  if (!hasSuccessfulRender) container.innerHTML = '<div class="loading">Loading projects...</div>';
+  if (!hasSuccessfulRender) {
+    if (container.classList) container.classList.add('loading');
+    container.innerHTML = 'Loading projects...';
+  }
   setRefreshState('loading');
   activeLoad = (async () => {
     try {
       const response = await fetch('/api/apps');
       if (!response.ok) throw new Error(`Request failed with ${response.status}`);
       container.innerHTML = renderApps(await response.json(), Date.now());
+      if (container.classList) container.classList.remove('loading');
       hasSuccessfulRender = true;
       setRefreshState('idle');
     } catch (error) {
-      if (!hasSuccessfulRender) container.innerHTML = '<div class="empty">Error loading projects</div>';
+      if (!hasSuccessfulRender) {
+        if (container.classList) container.classList.remove('loading');
+        container.innerHTML = '<div class="empty">Error loading projects</div>';
+      }
       setRefreshState('error');
       console.error(error);
     } finally {
