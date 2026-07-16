@@ -7,7 +7,7 @@ filesystem size, Dokku build-cache size, and host RAM/disk distribution.
 Application names link directly to their configured domains. The page refreshes
 automatically every 30 seconds and is protected by one shared password.
 
-The production image uses a digest-pinned Node.js 22.23.1 Alpine base, runs as
+The production image uses a digest-pinned Node.js 24.18.0 Alpine base, runs as
 UID/GID 32767, and is approximately 58 MB. The repository does not currently
 ship a screenshot asset; the interface is available locally through the mock
 preview described below.

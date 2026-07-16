@@ -7,10 +7,11 @@ const path = require('node:path');
 
 const root = path.join(__dirname, '..');
 
-test('production image uses pinned Alpine Node 22 and the Dokku storage UID', () => {
+test('production image uses pinned Alpine Node 24 and the Dokku storage UID', () => {
   const dockerfile = fs.readFileSync(path.join(root, 'Dockerfile'), 'utf8');
 
-  assert.match(dockerfile, /^FROM node:22\.23\.1-alpine@sha256:[a-f0-9]{64} AS dependencies$/m);
+  assert.match(dockerfile, /^FROM node:24\.18\.0-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd AS dependencies$/m);
+  assert.match(dockerfile, /^FROM node:24\.18\.0-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd$/m);
   assert.match(dockerfile, /^RUN npm ci --omit=dev --ignore-scripts/m);
   assert.match(dockerfile, /^EXPOSE 5000$/m);
   assert.match(dockerfile, /^USER 32767:32767$/m);
