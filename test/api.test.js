@@ -44,7 +44,7 @@ test('authenticated apps API preserves fields and serializes missing metrics as 
   const [app] = JSON.parse(response.body);
   assert.deepEqual(Object.keys(app), ['name', 'status', 'uptime', 'memoryMB', 'lastCommit', 'url', 'storage', 'metrics']);
   assert.equal(app.url, 'https://alpha.example.com');
-  assert.deepEqual(app.storage, { containerWritableBytes: null, cacheBytes: 2048 });
+  assert.deepEqual(app.storage, { containerRootFsBytes: null, cacheBytes: 2048 });
   assert.deepEqual(app.metrics, metrics);
 });
 
@@ -99,11 +99,11 @@ test('container metrics mirror current Docker discovery and exclude stale stored
     store: { getAppMetrics: () => ({ current: null, peaks7d: {}, history24h: [], containers: [{ containerId: 'stale', cpuPercent: 9 }] }), close() {} }, collector: { start() {}, stop() {} },
   });
   const containers = (await dashboard.getApps())[0].metrics.containers;
-  assert.deepEqual(containers, [{ containerId: 'new', processName: 'web', state: 'running', timestamp: null, cpuPercent: null, memoryBytes: null, memoryLimitBytes: null, diskWritableBytes: 1024, diskRootFsBytes: 4096 }]);
-  assert.deepEqual((await dashboard.getApps())[0].storage, { containerWritableBytes: 1024, cacheBytes: null });
+  assert.deepEqual(containers, [{ containerId: 'new', processName: 'web', state: 'running', timestamp: null, cpuPercent: null, memoryBytes: null, memoryLimitBytes: null, diskRootFsBytes: 4096 }]);
+  assert.deepEqual((await dashboard.getApps())[0].storage, { containerRootFsBytes: 4096, cacheBytes: null });
 });
 
-test('storage usage sums writable layers and maps each Dokku build cache volume', async () => {
+test('storage usage takes the largest root filesystem and maps each Dokku build cache volume', async () => {
   const dashboard = createDashboard({
     env: { SESSION_SECRET: 'test' },
     listContainers: async () => [
@@ -119,8 +119,9 @@ test('storage usage sums writable layers and maps each Dokku build cache volume'
     collector: { start() {}, stop() {} },
   });
   const [app] = await dashboard.getApps();
-  assert.deepEqual(app.storage, { containerWritableBytes: 300, cacheBytes: 900 });
-  assert.deepEqual(app.metrics.containers.map(container => [container.diskWritableBytes, container.diskRootFsBytes]), [[100, 1000], [200, 1100]]);
+  assert.deepEqual(app.storage, { containerRootFsBytes: 1100, cacheBytes: 900 });
+  assert.deepEqual(app.metrics.containers.map(container => container.diskRootFsBytes), [1000, 1100]);
+  assert.ok(app.storage.containerRootFsBytes < 1000 + 1100, 'shared root filesystems must not be summed');
 });
 
 test('storage metrics degrade to null when Docker disk usage is unavailable', async () => {
@@ -132,7 +133,7 @@ test('storage metrics degrade to null when Docker disk usage is unavailable', as
     collector: { start() {}, stop() {} },
   });
   const [app] = await dashboard.getApps();
-  assert.deepEqual(app.storage, { containerWritableBytes: null, cacheBytes: null });
+  assert.deepEqual(app.storage, { containerRootFsBytes: null, cacheBytes: null });
 });
 
 test('collector samples flow through SQLite into the authenticated apps API', async t => {

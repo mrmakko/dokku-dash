@@ -100,10 +100,10 @@ metrics are returned. Then capture the identity of one application sample from
 the last 20 minutes, restart, and assert that the exact row still exists:
 
 ```bash
-MARKER=$(dokku run dashboard node -e "const D=require('better-sqlite3')('/app/data/metrics.sqlite',{readonly:true}); const r=D.prepare(\"SELECT id,timestamp FROM samples WHERE scope='app' AND timestamp>=? ORDER BY id DESC LIMIT 1\").get(Date.now()-20*60*1000); if(!r) throw new Error('no recent application sample; wait for collection'); console.log(r.id+':'+r.timestamp)")
+MARKER=$(dokku run dashboard node -e "const {DatabaseSync}=require('node:sqlite'); const D=new DatabaseSync('/app/data/metrics.sqlite',{readOnly:true}); const r=D.prepare(\"SELECT id,timestamp FROM samples WHERE scope='app' AND timestamp>=? ORDER BY id DESC LIMIT 1\").get(Date.now()-20*60*1000); if(!r) throw new Error('no recent application sample; wait for collection'); console.log(r.id+':'+r.timestamp)")
 printf 'sample before restart: %s\n' "$MARKER"
 dokku ps:restart dashboard
-dokku run dashboard node -e "const D=require('better-sqlite3')('/app/data/metrics.sqlite',{readonly:true}); const p=process.argv[1].split(':').map(Number); const r=D.prepare('SELECT 1 FROM samples WHERE id=? AND timestamp=?').get(p[0],p[1]); if(!r) throw new Error('sample did not survive restart'); console.log('sample preserved')" "$MARKER"
+dokku run dashboard node -e "const {DatabaseSync}=require('node:sqlite'); const D=new DatabaseSync('/app/data/metrics.sqlite',{readOnly:true}); const p=process.argv[1].split(':').map(Number); const r=D.prepare('SELECT 1 FROM samples WHERE id=? AND timestamp=?').get(p[0],p[1]); if(!r) throw new Error('sample did not survive restart'); console.log('sample preserved')" "$MARKER"
 ```
 
 The final command must print `sample preserved`; otherwise it exits non-zero.

@@ -123,17 +123,16 @@ function createDashboard(options = {}) {
           cpuPercent: stored.cpuPercent ?? null,
           memoryBytes: stored.memoryBytes ?? null,
           memoryLimitBytes: stored.memoryLimitBytes ?? null,
-          diskWritableBytes: Number.isFinite(container.SizeRw) && container.SizeRw >= 0 ? container.SizeRw : null,
           diskRootFsBytes: Number.isFinite(container.SizeRootFs) && container.SizeRootFs >= 0 ? container.SizeRootFs : null,
         };
       });
-      const writableSizes = metrics.containers.map(container => container.diskWritableBytes).filter(Number.isFinite);
+      const rootFsSizes = metrics.containers.map(container => container.diskRootFsBytes).filter(Number.isFinite);
       return {
         name, status: data.state === 'running' ? 'running' : 'stopped',
         uptime: data.state === 'running' ? data.uptime : null, memoryMB,
         lastCommit: getLastCommit(name), url: data.url,
         storage: {
-          containerWritableBytes: writableSizes.length ? writableSizes.reduce((total, size) => total + size, 0) : null,
+          containerRootFsBytes: rootFsSizes.length ? Math.max(...rootFsSizes) : null,
           cacheBytes: cacheBytesByApp.get(name) ?? null,
         },
         metrics,

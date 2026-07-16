@@ -113,7 +113,8 @@ test('physically deletes peak buckets older than the overlapping boundary hour',
   const now = Date.UTC(2026, 6, 14, 12, 30);
   store.recordRun(now - 8 * 24 * 60 * 60 * 1000, [appSample(99, 999)]);
   store.recordRun(now, [appSample(4, 40)]);
-  const buckets = store.database.prepare('SELECT bucket FROM hourly_peaks ORDER BY bucket').all();
+  const buckets = store.database.prepare('SELECT bucket FROM hourly_peaks ORDER BY bucket').all()
+    .map(row => ({ ...row }));
   assert.deepEqual(buckets, [{ bucket: Date.UTC(2026, 6, 14, 12) }]);
 }));
 
