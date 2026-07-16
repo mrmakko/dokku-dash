@@ -4,7 +4,7 @@
   "description": "Simple Dokku projects dashboard",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
+    "start": "node --experimental-sqlite index.js",
     "dev": "node index.js",
     "preview": "node preview.js",
     "test": "node --test"
