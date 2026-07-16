@@ -35,3 +35,10 @@ test('Docker context excludes local and development-only files', () => {
     assert.ok(ignored.has(entry), `${entry} must be excluded from the Docker context`);
   }
 });
+
+test('Dokku Procfile uses the same direct Node command as the image', () => {
+  const procfile = fs.readFileSync(path.join(root, 'Procfile'), 'utf8').trim();
+
+  assert.equal(procfile, 'web: node --experimental-sqlite index.js');
+  assert.doesNotMatch(procfile, /\bnpm\b/);
+});

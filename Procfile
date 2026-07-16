@@ -1,1 +1,1 @@
-web: npm start
+web: node --experimental-sqlite index.js
