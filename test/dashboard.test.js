@@ -104,29 +104,33 @@ test('usage distribution renders proportional accessible RAM and root filesystem
     { name: 'alpha', metrics: { current: { memoryBytes: 100 } }, storage: { containerRootFsBytes: 300 } },
     { name: 'beta', metrics: { current: { memoryBytes: 300 } }, storage: { containerRootFsBytes: 100 } },
   ];
-  const html = renderUsageDistribution(apps);
-  assert.match(html, /Current RAM[\s\S]*Total 400 B[\s\S]*alpha: 100 B \(25\.0% of total\)[\s\S]*beta: 300 B \(75\.0% of total\)/);
-  assert.match(html, /Root filesystem[\s\S]*Total 400 B[\s\S]*alpha: 300 B \(75\.0% of total\)[\s\S]*beta: 100 B \(25\.0% of total\)/);
-  assert.equal((html.match(/role="img" tabindex="0"/g) || []).length, 4);
-  assert.match(html, /--segment-width:25\.000000%/);
-  const colors = [...html.matchAll(/--segment-color:(hsl\([^)]+\))/g)].map(match => match[1]);
+  const system = { ram: { totalBytes: 1000, freeBytes: 500 }, disk: { totalBytes: 1000, freeBytes: 600 } };
+  const html = renderUsageDistribution(apps, system);
+  assert.match(html, /Current RAM[\s\S]*Apps 400 B · Free 500 B · Host 1000 B[\s\S]*alpha: 100 B[\s\S]*beta: 300 B[\s\S]*Other host used: 100 B[\s\S]*Host free: 500 B/);
+  assert.match(html, /Disk · app rootfs \(logical\)[\s\S]*Apps 400 B · Free 600 B · Host 1000 B[\s\S]*alpha: 300 B logical root filesystem[\s\S]*beta: 100 B logical root filesystem/);
+  assert.equal((html.match(/role="img" tabindex="0"/g) || []).length, 7);
+  assert.match(html, /--segment-width:10\.000000%/);
+  assert.match(html, /--segment-width:50\.000000%/);
+  const colors = [...html.matchAll(/--segment-color:(#[0-9a-f]{6})/g)].map(match => match[1]);
   assert.deepEqual(colors, [colors[0], colors[1], colors[0], colors[1]]);
   assert.notEqual(colors[0], colors[1]);
   assert.doesNotMatch(html, /cacheBytes|diskWritableBytes/);
 });
 
-test('usage distribution handles unavailable and zero totals without invalid segments', () => {
+test('usage distribution handles unavailable capacity, zero apps, and over-capacity logical totals safely', () => {
   const html = renderUsageDistribution([
-    { name: 'zero', metrics: { current: { memoryBytes: 0 } }, storage: {} },
-    { name: 'missing', metrics: {}, storage: {} },
-  ]);
-  assert.match(html, /Current RAM[\s\S]*Total 0 B[\s\S]*No usage/);
-  assert.match(html, /Root filesystem[\s\S]*Total Unavailable[\s\S]*No data/);
-  assert.doesNotMatch(html, /usage-segment|NaN|Infinity/);
+    { name: 'zero', metrics: { current: { memoryBytes: 0 } }, storage: { containerRootFsBytes: 900 } },
+    { name: 'missing', metrics: {}, storage: { containerRootFsBytes: 900 } },
+  ], { ram: { totalBytes: 1000, freeBytes: 600 }, disk: { totalBytes: 1000, freeBytes: 200 } });
+  assert.match(html, /Current RAM[\s\S]*Apps 0 B · Free 600 B[\s\S]*Other host used: 400 B/);
+  assert.match(html, /Disk · app rootfs \(logical\)[\s\S]*Apps 1\.8 KB · Free 200 B/);
+  assert.doesNotMatch(html, /NaN|Infinity|--segment-width:-/);
+  const unavailable = renderUsageDistribution([], null);
+  assert.match(unavailable, /Apps 0 B · Free Unavailable · Host Unavailable[\s\S]*Host capacity unavailable/);
 });
 
 test('rendered app list places usage distribution before project cards', () => {
-  const html = renderApps([{ name: 'alpha', status: 'running', metrics: {}, storage: {} }]);
+  const html = renderApps([{ name: 'alpha', status: 'running', metrics: {}, storage: {} }], Date.now(), null);
   assert.ok(html.indexOf('usage-distribution') < html.indexOf('apps-grid'));
 });
 
@@ -176,6 +180,14 @@ test('dashboard cards use larger chart labels without decorative lines below cha
   assert.doesNotMatch(css, /\.container-details\s*{[^}]*border-top/);
 });
 
+test('host usage bars stay clipped and stack on narrow screens', () => {
+  const css = fs.readFileSync(path.join(__dirname, '../public/style.css'), 'utf8');
+  assert.match(css, /\.usage-bar\s*{[^}]*height:\s*30px[^}]*overflow:\s*hidden/);
+  assert.match(css, /\.usage-heading\s*{[^}]*flex-wrap:\s*wrap/);
+  assert.match(css, /\.usage-label, \.usage-total\s*{[^}]*font-size:\s*10px/);
+  assert.match(css, /@media \(max-width: 820px\)[\s\S]*?\.usage-distribution\s*{[^}]*grid-template-columns:\s*1fr/);
+});
+
 test('refresh keeps rendered cards visible, prevents overlap, and reports failures in the header', async () => {
   const container = { innerHTML: '<div class="loading">Loading projects...</div>' };
   const status = { textContent: '', className: '', hidden: true };
@@ -184,19 +196,20 @@ test('refresh keeps rendered cards visible, prevents overlap, and reports failur
     return { 'apps-container': container, 'refresh-status': status, 'refresh-button': button }[id];
   } };
   let rejectFetch;
-  let fetchCalls = 0;
+  let appFetchCalls = 0;
   const originalConsoleError = console.error;
   console.error = () => {};
-  global.fetch = () => {
-    fetchCalls++;
-    if (fetchCalls === 1) return Promise.resolve({ ok: true, json: async () => [{ name: 'existing', status: 'running' }] });
+  global.fetch = url => {
+    if (url === '/api/system') return Promise.resolve({ ok: true, json: async () => ({ ram: { totalBytes: 1000, freeBytes: 500 }, disk: { totalBytes: 1000, freeBytes: 500 } }) });
+    appFetchCalls++;
+    if (appFetchCalls === 1) return Promise.resolve({ ok: true, json: async () => [{ name: 'existing', status: 'running' }] });
     return new Promise((resolve, reject) => { rejectFetch = reject; });
   };
 
   await loadApps();
   const first = loadApps();
   const overlapping = loadApps();
-  assert.equal(fetchCalls, 2);
+  assert.equal(appFetchCalls, 2);
   assert.match(container.innerHTML, /existing/);
   assert.equal(button.disabled, true);
   assert.equal(status.hidden, false);
@@ -221,10 +234,11 @@ test('refresh preserves a successfully rendered empty state', async () => {
     return { 'apps-container': container, 'refresh-status': status, 'refresh-button': button }[id];
   } };
   let resolveRefresh;
-  let fetchCalls = 0;
-  global.fetch = () => {
-    fetchCalls++;
-    if (fetchCalls === 1) return Promise.resolve({ ok: true, json: async () => [] });
+  let appFetchCalls = 0;
+  global.fetch = url => {
+    if (url === '/api/system') return Promise.resolve({ ok: true, json: async () => ({ ram: { totalBytes: 1, freeBytes: 1 }, disk: { totalBytes: 1, freeBytes: 1 } }) });
+    appFetchCalls++;
+    if (appFetchCalls === 1) return Promise.resolve({ ok: true, json: async () => [] });
     return new Promise(resolve => { resolveRefresh = resolve; });
   };
 
@@ -235,6 +249,24 @@ test('refresh preserves a successfully rendered empty state', async () => {
   assert.doesNotMatch(container.innerHTML, /Loading projects/);
   resolveRefresh({ ok: true, json: async () => [] });
   await refresh;
+  delete global.document;
+  delete global.fetch;
+});
+
+test('system metrics failure does not hide successfully fetched app cards', async () => {
+  const container = { innerHTML: '', classList: { add() {}, remove() {}, toggle() {} } };
+  const status = { textContent: '', className: '', hidden: true };
+  const button = { disabled: false };
+  global.document = { getElementById(id) {
+    return { 'apps-container': container, 'refresh-status': status, 'refresh-button': button }[id];
+  } };
+  global.fetch = url => url === '/api/system'
+    ? Promise.reject(new Error('system metrics unavailable'))
+    : Promise.resolve({ ok: true, json: async () => [{ name: 'still-visible', status: 'running', metrics: {}, storage: {} }] });
+  await loadApps();
+  assert.match(container.innerHTML, /still-visible/);
+  assert.match(container.innerHTML, /Host capacity unavailable/);
+  assert.equal(status.hidden, true);
   delete global.document;
   delete global.fetch;
 });

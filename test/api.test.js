@@ -6,7 +6,7 @@ const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
 const fs = require('node:fs');
-const { createDashboard, shutdownDashboard } = require('../index');
+const { createDashboard, shutdownDashboard, parseLinuxMemAvailable } = require('../index');
 const { MetricsStore } = require('../lib/metrics-store');
 const { MetricsCollector } = require('../lib/metrics-collector');
 
@@ -21,6 +21,12 @@ function request(server, options, body) {
     if (body) req.end(body); else req.end();
   });
 }
+
+test('Linux MemAvailable parser returns bytes and rejects missing or malformed values', () => {
+  assert.equal(parseLinuxMemAvailable('MemTotal:       8000000 kB\nMemAvailable:   3145728 kB\n'), 3 * 1024 * 1024 * 1024);
+  assert.equal(parseLinuxMemAvailable('MemFree: 123 kB\n'), null);
+  assert.equal(parseLinuxMemAvailable('MemAvailable: unknown kB\n'), null);
+});
 
 test('authenticated apps API preserves fields and serializes missing metrics as null', async t => {
   const metrics = { current: null, peaks7d: { cpuPercent: null, memoryBytes: null }, history24h: [], containers: [] };
@@ -101,6 +107,47 @@ test('container metrics mirror current Docker discovery and exclude stale stored
   const containers = (await dashboard.getApps())[0].metrics.containers;
   assert.deepEqual(containers, [{ containerId: 'new', processName: 'web', state: 'running', timestamp: null, cpuPercent: null, memoryBytes: null, memoryLimitBytes: null, diskRootFsBytes: 4096 }]);
   assert.deepEqual((await dashboard.getApps())[0].storage, { containerRootFsBytes: 4096, cacheBytes: null });
+});
+
+test('system API is authenticated, injectable, and normalizes host capacities', async t => {
+  const dashboard = createDashboard({
+    env: { DASHBOARD_PASSWORD: 'pw', SESSION_SECRET: 'test-secret' },
+    getSystemUsage: async () => ({
+      ram: { totalBytes: 1000, freeBytes: 1200 },
+      disk: { totalBytes: 5000, freeBytes: 2000 },
+    }),
+    store: { close() {} }, collector: { start() {}, stop() {} },
+  });
+  const server = dashboard.app.listen(0);
+  t.after(() => server.close());
+  const unauthorized = await request(server, { path: '/api/system' });
+  assert.equal(unauthorized.status, 302);
+  assert.equal(unauthorized.headers.location, '/login');
+  const login = await request(server, { method: 'POST', path: '/login', headers: { 'content-type': 'application/x-www-form-urlencoded' } }, 'password=pw');
+  const cookie = login.headers['set-cookie'][0].split(';')[0];
+  const response = await request(server, { path: '/api/system', headers: { cookie } });
+  assert.equal(response.status, 200);
+  assert.deepEqual(JSON.parse(response.body), {
+    ram: { totalBytes: 1000, freeBytes: 1000 },
+    disk: { totalBytes: 5000, freeBytes: 2000 },
+  });
+});
+
+test('system usage errors and invalid values degrade to null metrics', async () => {
+  const failed = createDashboard({
+    env: { SESSION_SECRET: 'test' }, getSystemUsage: async () => { throw new Error('statfs failed'); },
+    store: { close() {} }, collector: { start() {}, stop() {} },
+  });
+  assert.deepEqual(await failed.getSystemUsage(), {
+    ram: { totalBytes: null, freeBytes: null }, disk: { totalBytes: null, freeBytes: null },
+  });
+  const invalid = createDashboard({
+    env: { SESSION_SECRET: 'test' }, getSystemUsage: async () => ({ ram: { totalBytes: -1, freeBytes: 2 }, disk: {} }),
+    store: { close() {} }, collector: { start() {}, stop() {} },
+  });
+  assert.deepEqual(await invalid.getSystemUsage(), {
+    ram: { totalBytes: null, freeBytes: null }, disk: { totalBytes: null, freeBytes: null },
+  });
 });
 
 test('storage usage takes the largest root filesystem and maps each Dokku build cache volume', async () => {

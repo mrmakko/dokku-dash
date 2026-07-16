@@ -96,34 +96,77 @@ function renderMetric(label, value, detail = '', valueClass = '') {
   return `<div class="metric"><span class="metric-label">${label}</span><strong class="${className}">${escapeHtml(value)}</strong>${detail ? `<small class="metric-detail">${escapeHtml(detail)}</small>` : ''}</div>`;
 }
 
-function appColor(name) {
+const APP_COLORS = ['#30495a', '#4b5262', '#3f5a52', '#584b5f', '#5b573f', '#354d4c', '#574b48', '#3c5060', '#4c5960', '#465442', '#4d4657', '#3f4855'];
+
+function appColorIndex(name) {
   let hash = 0;
   for (const character of String(name)) hash = ((hash << 5) - hash + character.codePointAt(0)) | 0;
-  return `hsl(${Math.abs(hash) % 360} 62% 46%)`;
+  return Math.abs(hash) % APP_COLORS.length;
 }
 
-function renderUsageBar(apps, label, valueForApp) {
+function buildAppColors(apps) {
+  const colors = new Map();
+  const used = new Set();
+  const names = [...new Set(apps.map(app => String(app.name)))].sort();
+  for (const name of names) {
+    const start = appColorIndex(name);
+    let index = start;
+    if (used.size < APP_COLORS.length) {
+      while (used.has(index)) index = (index + 1) % APP_COLORS.length;
+      used.add(index);
+    }
+    colors.set(name, APP_COLORS[index]);
+  }
+  return colors;
+}
+
+function renderCapacitySegment(className, width, description, color = '') {
+  if (!(width > 0)) return '';
+  const colorStyle = color ? `--segment-color:${color};` : '';
+  return `<span class="usage-segment ${className}" style="--segment-width:${width.toFixed(6)}%;${colorStyle}" role="img" tabindex="0" aria-label="${escapeHtml(description)}" title="${escapeHtml(description)}"></span>`;
+}
+
+function renderUsageBar(apps, label, valueForApp, capacity, colors, options = {}) {
   const values = apps.map(app => ({ app, value: valueForApp(app) }));
   const available = values.filter(item => finiteNumber(item.value) && item.value >= 0);
   const used = available.filter(item => item.value > 0);
-  const total = used.reduce((sum, item) => sum + item.value, 0);
-  const totalLabel = available.length ? formatBytes(total) : 'Unavailable';
-  const segments = used.map(({ app, value }) => {
-    const percentage = value / total * 100;
-    const description = `${app.name}: ${formatBytes(value)} (${percentage.toFixed(1)}% of total)`;
-    return `<span class="usage-segment" style="--segment-width:${percentage.toFixed(6)}%;--segment-color:${appColor(app.name)}" role="img" tabindex="0" aria-label="${escapeHtml(description)}" title="${escapeHtml(description)}"></span>`;
-  }).join('');
-  const emptyMessage = available.length ? 'No usage' : 'No data';
+  const appTotal = used.reduce((sum, item) => sum + item.value, 0);
+  const appTotalKnown = apps.length === 0 || available.length > 0;
+  const hostTotal = capacity && finiteNumber(capacity.totalBytes) && capacity.totalBytes > 0 ? capacity.totalBytes : null;
+  const hostFree = hostTotal != null && finiteNumber(capacity.freeBytes) && capacity.freeBytes >= 0
+    ? Math.min(capacity.freeBytes, hostTotal)
+    : null;
+  const capacityAvailable = hostTotal != null && hostFree != null;
+  const appTotalLabel = appTotalKnown ? formatBytes(appTotal) : 'Unavailable';
+  const freeLabel = hostFree != null ? formatBytes(hostFree) : 'Unavailable';
+  const hostLabel = hostTotal != null ? formatBytes(hostTotal) : 'Unavailable';
+  let segments = '';
+  if (capacityAvailable) {
+    const hostUsed = hostTotal - hostFree;
+    const displayedAppTotal = Math.min(appTotal, hostUsed);
+    segments += used.map(({ app, value }) => {
+      const width = appTotal > 0 ? value / appTotal * displayedAppTotal / hostTotal * 100 : 0;
+      const qualifier = options.logical ? ' logical root filesystem' : '';
+      return renderCapacitySegment('usage-segment-app', width, `${app.name}: ${formatBytes(value)}${qualifier}`, colors.get(String(app.name)));
+    }).join('');
+    const otherUsed = Math.max(0, hostUsed - displayedAppTotal);
+    segments += renderCapacitySegment('usage-segment-other', otherUsed / hostTotal * 100, `Other host used: ${formatBytes(otherUsed)}`);
+    segments += renderCapacitySegment('usage-segment-free', hostFree / hostTotal * 100, `Host free: ${formatBytes(hostFree)}`);
+  }
+  const explanation = options.logical
+    ? 'Logical app root filesystem sizes may share image layers and are scaled within host-used disk capacity.'
+    : 'App usage, other host usage, and free host capacity.';
   return `<section class="usage-metric" aria-label="${escapeHtml(label)} distribution">
-    <div class="usage-heading"><span class="usage-label">${escapeHtml(label)}</span><span class="usage-total">Total ${escapeHtml(totalLabel)}</span></div>
-    <div class="usage-bar${segments ? '' : ' usage-bar-empty'}">${segments || `<span>${emptyMessage}</span>`}</div>
+    <div class="usage-heading"><span class="usage-label">${escapeHtml(label)}</span><span class="usage-total">Apps ${escapeHtml(appTotalLabel)} · Free ${escapeHtml(freeLabel)} · Host ${escapeHtml(hostLabel)}</span></div>
+    <div class="usage-bar${capacityAvailable ? '' : ' usage-bar-empty'}" aria-label="${escapeHtml(explanation)}" title="${escapeHtml(explanation)}">${capacityAvailable ? segments : '<span>Host capacity unavailable</span>'}</div>
   </section>`;
 }
 
-function renderUsageDistribution(apps) {
+function renderUsageDistribution(apps, systemUsage = null) {
+  const colors = buildAppColors(apps);
   return `<div class="usage-distribution">
-    ${renderUsageBar(apps, 'Current RAM', app => app.metrics && app.metrics.current && app.metrics.current.memoryBytes)}
-    ${renderUsageBar(apps, 'Root filesystem', app => app.storage && app.storage.containerRootFsBytes)}
+    ${renderUsageBar(apps, 'Current RAM', app => app.metrics && app.metrics.current && app.metrics.current.memoryBytes, systemUsage && systemUsage.ram, colors)}
+    ${renderUsageBar(apps, 'Disk · app rootfs (logical)', app => app.storage && app.storage.containerRootFsBytes, systemUsage && systemUsage.disk, colors, { logical: true })}
   </div>`;
 }
 
@@ -184,9 +227,11 @@ function renderAppCard(app, now = Date.now()) {
   </article>`;
 }
 
-function renderApps(apps, now = Date.now()) {
-  if (!apps.length) return '<div class="empty">No projects deployed yet</div>';
-  return `${renderUsageDistribution(apps)}<div class="apps-grid">${apps.map(app => renderAppCard(app, now)).join('')}</div>`;
+function renderApps(apps, now = Date.now(), systemUsage = null) {
+  const cards = apps.length
+    ? `<div class="apps-grid">${apps.map(app => renderAppCard(app, now)).join('')}</div>`
+    : '<div class="empty">No projects deployed yet</div>';
+  return `${renderUsageDistribution(apps, systemUsage)}${cards}`;
 }
 
 let activeLoad = null;
@@ -214,9 +259,16 @@ function loadApps() {
   setRefreshState('loading');
   activeLoad = (async () => {
     try {
-      const response = await fetch('/api/apps');
+      const appsRequest = fetch('/api/apps');
+      const systemRequest = fetch('/api/system').then(async response => {
+        if (!response.ok) return null;
+        return response.json();
+      }).catch(() => null);
+      const response = await appsRequest;
       if (!response.ok) throw new Error(`Request failed with ${response.status}`);
-      container.innerHTML = renderApps(await response.json(), Date.now());
+      const apps = await response.json();
+      const systemUsage = await systemRequest;
+      container.innerHTML = renderApps(apps, Date.now(), systemUsage);
       if (container.classList) container.classList.remove('loading');
       hasSuccessfulRender = true;
       setRefreshState('idle');

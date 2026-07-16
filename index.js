@@ -4,6 +4,7 @@ const express = require('express');
 const session = require('express-session');
 const bodyParser = require('body-parser');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const http = require('http');
 const { execFileSync } = require('child_process');
@@ -51,6 +52,36 @@ function deployFilters() {
   return encodeURIComponent(JSON.stringify({ label: ['com.dokku.container-type=deploy'] }));
 }
 
+function parseLinuxMemAvailable(meminfo) {
+  const match = String(meminfo || '').match(/^MemAvailable:\s+(\d+)\s+kB\s*$/mi);
+  if (!match) return null;
+  const bytes = Number(match[1]) * 1024;
+  return Number.isFinite(bytes) && bytes >= 0 ? bytes : null;
+}
+
+async function defaultGetSystemUsage() {
+  let availableMemory = os.freemem();
+  try {
+    const parsed = parseLinuxMemAvailable(await fs.promises.readFile('/proc/meminfo', 'utf8'));
+    if (parsed != null) availableMemory = parsed;
+  } catch (_error) {}
+  const ram = { totalBytes: os.totalmem(), freeBytes: availableMemory };
+  let disk = { totalBytes: null, freeBytes: null };
+  try {
+    const stats = await fs.promises.statfs('/');
+    disk = { totalBytes: stats.blocks * stats.bsize, freeBytes: stats.bavail * stats.bsize };
+  } catch (_error) {}
+  return { ram, disk };
+}
+
+function normalizeCapacity(capacity) {
+  const totalBytes = capacity && Number.isFinite(capacity.totalBytes) && capacity.totalBytes > 0 ? capacity.totalBytes : null;
+  const freeBytes = totalBytes != null && Number.isFinite(capacity.freeBytes) && capacity.freeBytes >= 0
+    ? Math.min(capacity.freeBytes, totalBytes)
+    : null;
+  return { totalBytes, freeBytes };
+}
+
 function createDashboard(options = {}) {
   const env = options.env || process.env;
   if (env.NODE_ENV === 'production' && !env.SESSION_SECRET) throw new Error('SESSION_SECRET is required in production');
@@ -61,6 +92,7 @@ function createDashboard(options = {}) {
   const getStorageUsage = options.getStorageUsage || (() => dockerGet('/system/df?type=volume', { socketPath: DOCKER_SOCKET }, dockerRequestTimeoutMs));
   const getStats = options.getStats || (id => dockerGet(`/containers/${id}/stats?stream=false`, { socketPath: DOCKER_SOCKET }, dockerRequestTimeoutMs));
   const getLastCommit = options.getLastCommit || defaultGetLastCommit;
+  const getSystemUsageSource = options.getSystemUsage || defaultGetSystemUsage;
   const store = options.store || new MetricsStore(env.METRICS_DB_PATH || path.join(__dirname, 'metrics.sqlite'));
   const collector = options.collector || new MetricsCollector({ listContainers, getStats, store });
   const app = express();
@@ -141,6 +173,15 @@ function createDashboard(options = {}) {
     return apps.sort((left, right) => left.name.localeCompare(right.name));
   }
 
+  async function getSystemUsage() {
+    try {
+      const usage = await getSystemUsageSource();
+      return { ram: normalizeCapacity(usage && usage.ram), disk: normalizeCapacity(usage && usage.disk) };
+    } catch (_error) {
+      return { ram: normalizeCapacity(null), disk: normalizeCapacity(null) };
+    }
+  }
+
   app.get('/login', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'login.html')));
   app.post('/login', (req, res) => {
     if (req.body.password === (env.DASHBOARD_PASSWORD || 'changeme')) {
@@ -151,6 +192,7 @@ function createDashboard(options = {}) {
   app.get('/api/apps', isAuthenticated, async (_req, res) => {
     try { res.json(await getApps()); } catch (error) { console.error('Error getting apps:', error); res.status(500).json({ error: error.message }); }
   });
+  app.get('/api/system', isAuthenticated, async (_req, res) => res.json(await getSystemUsage()));
   if (env.ENABLE_DEBUG_ENDPOINT === 'true') {
     app.get('/api/debug', isAuthenticated, async (_req, res) => res.json({
       dokkuRootExists: fs.existsSync(DOKKU_ROOT), dockerSocketExists: fs.existsSync(DOCKER_SOCKET),
@@ -160,7 +202,7 @@ function createDashboard(options = {}) {
 
   collector.start();
   let closed = false;
-  return { app, collector, store, getApps, async close() {
+  return { app, collector, store, getApps, getSystemUsage, async close() {
     if (closed) return;
     closed = true;
     try { await collector.stop(); } finally { store.close(); }
@@ -186,4 +228,4 @@ function startServer(options = {}) {
 
 if (require.main === module) startServer();
 
-module.exports = { createDashboard, startServer, shutdownDashboard, dockerGet };
+module.exports = { createDashboard, startServer, shutdownDashboard, dockerGet, defaultGetSystemUsage, parseLinuxMemAvailable };

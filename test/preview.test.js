@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
 const { createPreviewApp } = require('../preview');
-const { buildMockApps } = require('../lib/mock-apps');
+const { buildMockApps, buildMockSystemUsage } = require('../lib/mock-apps');
 
 function request(server, pathname) {
   return new Promise((resolve, reject) => {
@@ -27,6 +27,9 @@ test('mock apps are deterministic and cover preview states and storage metrics',
   assert.ok(first.every(app => Number.isFinite(app.storage.cacheBytes)));
   assert.ok(first.some(app => app.metrics.history24h.length > 100));
   assert.ok(first.some(app => app.url && app.uptime));
+  assert.deepEqual(buildMockSystemUsage(), buildMockSystemUsage());
+  assert.ok(buildMockSystemUsage().ram.totalBytes > buildMockSystemUsage().ram.freeBytes);
+  assert.ok(buildMockSystemUsage().disk.totalBytes > buildMockSystemUsage().disk.freeBytes);
 });
 
 test('preview serves the dashboard and unauthenticated mock API', async t => {
@@ -34,10 +37,12 @@ test('preview serves the dashboard and unauthenticated mock API', async t => {
   const server = createPreviewApp({ now: () => now }).listen(0);
   t.after(() => server.close());
 
-  const [page, api] = await Promise.all([request(server, '/'), request(server, '/api/apps')]);
+  const [page, api, systemApi] = await Promise.all([request(server, '/'), request(server, '/api/apps'), request(server, '/api/system')]);
   assert.equal(page.status, 200);
   assert.match(page.body, /Dokku Dashboard/);
   assert.equal(api.status, 200);
   assert.match(api.headers['content-type'], /^application\/json/);
   assert.deepEqual(JSON.parse(api.body), buildMockApps(now));
+  assert.equal(systemApi.status, 200);
+  assert.deepEqual(JSON.parse(systemApi.body), buildMockSystemUsage());
 });
