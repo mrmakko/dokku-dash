@@ -2,7 +2,6 @@
 
 const express = require('express');
 const session = require('express-session');
-const bodyParser = require('body-parser');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -97,8 +96,8 @@ function createDashboard(options = {}) {
   const collector = options.collector || new MetricsCollector({ listContainers, getStats, store });
   const app = express();
   if (env.NODE_ENV === 'production') app.set('trust proxy', 1);
-  app.use(bodyParser.json());
-  app.use(bodyParser.urlencoded({ extended: true }));
+  app.use(express.json());
+  app.use(express.urlencoded({ extended: true }));
   app.use(session({
     secret: env.SESSION_SECRET || 'development-only-session-secret',
     resave: false, saveUninitialized: true,

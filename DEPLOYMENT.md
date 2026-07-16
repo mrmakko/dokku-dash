@@ -30,19 +30,45 @@ Do not paste secret values into tickets or logs. Generate a new, long random
 dashboard password. Enter both secrets interactively with shell history
 disabled; do not put literal values in a command copied into shell history.
 
+## Dockerfile runtime
+
+This repository builds from a pinned Node 22 Alpine image and runs as the
+unprivileged UID/GID 32767. Select the Dockerfile builder and give that user
+only the supplemental group needed to read the host Docker socket:
+
+```sh
+dokku builder:set dashboard selected dockerfile
+dokku ports:set dashboard http:80:5000 https:443:5000
+SOCKET_GID=$(stat -c '%g' /var/run/docker.sock)
+dokku docker-options:add dashboard deploy,run "--group-add $SOCKET_GID"
+```
+
+Set the ports explicitly when switching builders. Dockerfile `EXPOSE 5000`
+describes the container port, but Dokku's detected default may otherwise expose
+public port 5000 instead of routing HTTP 80 and HTTPS 443 to the application.
+
+Keep the existing Docker socket mount used by the dashboard. Confirm it and the
+numeric supplemental group with `dokku docker-options:report dashboard`; if
+this is a new app, add the socket mount explicitly:
+
+```sh
+dokku docker-options:add dashboard deploy,run "--volume /var/run/docker.sock:/var/run/docker.sock"
+```
+
+Access to the Docker socket is security-sensitive and effectively grants host
+container control. Do not expose this image to untrusted code or users. The
+numeric socket group is host-specific, so recompute it after migrating hosts.
+
 ## Persistent metrics storage and configuration
 
 Use `builder:report` and the UID/GID printed by `dokku run dashboard id` to
-select Dokku's storage ownership mode. For the standard Herokuish buildpack
-runtime use `herokuish` (UID 32767); for Heroku CNB use `heroku` (UID 1000);
-for Paketo CNB use `paketo` (UID 2000); and for a root-running Docker image use
-`root`. A custom numeric runtime UID can be passed directly. The selected mode
-must match the effective application user shown by `id`.
+select Dokku's storage ownership mode. This Dockerfile uses UID 32767, so select
+`herokuish` (or numeric `32767`). The selected mode must match the effective
+application user shown by `id`.
 
 Set `STORAGE_CHOWN` to that verified mode, create the named entry with explicit
 ownership, mount it, and prove that a one-off application process can write to
-the mount. The value below is correct only when preflight identified the
-standard Herokuish runtime:
+the mount. The value below is correct for this repository's Dockerfile runtime:
 
 The secret-entry block requires Bash attached to an interactive TTY. When
 connecting remotely, allocate one explicitly (for example,

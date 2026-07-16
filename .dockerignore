@@ -1,0 +1,15 @@
+.git
+.gitignore
+.agents
+.claude
+node_modules
+test
+docs
+*.md
+.env*
+metrics.sqlite*
+preview.js
+Procfile
+app.json
+coverage
+npm-debug.log*
