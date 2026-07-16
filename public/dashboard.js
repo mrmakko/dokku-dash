@@ -96,6 +96,37 @@ function renderMetric(label, value, detail = '', valueClass = '') {
   return `<div class="metric"><span class="metric-label">${label}</span><strong class="${className}">${escapeHtml(value)}</strong>${detail ? `<small class="metric-detail">${escapeHtml(detail)}</small>` : ''}</div>`;
 }
 
+function appColor(name) {
+  let hash = 0;
+  for (const character of String(name)) hash = ((hash << 5) - hash + character.codePointAt(0)) | 0;
+  return `hsl(${Math.abs(hash) % 360} 62% 46%)`;
+}
+
+function renderUsageBar(apps, label, valueForApp) {
+  const values = apps.map(app => ({ app, value: valueForApp(app) }));
+  const available = values.filter(item => finiteNumber(item.value) && item.value >= 0);
+  const used = available.filter(item => item.value > 0);
+  const total = used.reduce((sum, item) => sum + item.value, 0);
+  const totalLabel = available.length ? formatBytes(total) : 'Unavailable';
+  const segments = used.map(({ app, value }) => {
+    const percentage = value / total * 100;
+    const description = `${app.name}: ${formatBytes(value)} (${percentage.toFixed(1)}% of total)`;
+    return `<span class="usage-segment" style="--segment-width:${percentage.toFixed(6)}%;--segment-color:${appColor(app.name)}" role="img" tabindex="0" aria-label="${escapeHtml(description)}" title="${escapeHtml(description)}"></span>`;
+  }).join('');
+  const emptyMessage = available.length ? 'No usage' : 'No data';
+  return `<section class="usage-metric" aria-label="${escapeHtml(label)} distribution">
+    <div class="usage-heading"><span class="usage-label">${escapeHtml(label)}</span><span class="usage-total">Total ${escapeHtml(totalLabel)}</span></div>
+    <div class="usage-bar${segments ? '' : ' usage-bar-empty'}">${segments || `<span>${emptyMessage}</span>`}</div>
+  </section>`;
+}
+
+function renderUsageDistribution(apps) {
+  return `<div class="usage-distribution">
+    ${renderUsageBar(apps, 'Current RAM', app => app.metrics && app.metrics.current && app.metrics.current.memoryBytes)}
+    ${renderUsageBar(apps, 'Root filesystem', app => app.storage && app.storage.containerRootFsBytes)}
+  </div>`;
+}
+
 function renderContainers(appName, containers) {
   if (!containers.length) return '';
   const rows = containers.map(container => `<tr>
@@ -155,7 +186,7 @@ function renderAppCard(app, now = Date.now()) {
 
 function renderApps(apps, now = Date.now()) {
   if (!apps.length) return '<div class="empty">No projects deployed yet</div>';
-  return `<div class="apps-grid">${apps.map(app => renderAppCard(app, now)).join('')}</div>`;
+  return `${renderUsageDistribution(apps)}<div class="apps-grid">${apps.map(app => renderAppCard(app, now)).join('')}</div>`;
 }
 
 let activeLoad = null;
@@ -210,7 +241,7 @@ async function logout() {
   window.location.href = '/login';
 }
 
-const dashboardExports = { escapeHtml, formatCpu, formatBytes, formatMemory, renderSparkline, renderAppCard, renderApps, loadApps, logout };
+const dashboardExports = { escapeHtml, formatCpu, formatBytes, formatMemory, renderSparkline, renderUsageDistribution, renderAppCard, renderApps, loadApps, logout };
 if (typeof module !== 'undefined' && module.exports) module.exports = dashboardExports;
 if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   window.loadApps = loadApps;

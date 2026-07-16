@@ -9,7 +9,9 @@ const {
   formatCpu,
   formatBytes,
   renderSparkline,
+  renderUsageDistribution,
   renderAppCard,
+  renderApps,
   loadApps,
 } = require('../public/dashboard');
 
@@ -95,6 +97,37 @@ test('app card renders current and weekly aggregate metrics as plain numbers', (
   assert.match(html, /Build cache[\s\S]*1\.0 GB/);
   assert.doesNotMatch(html, /Container writable disk/);
   assert.equal((html.match(/<svg/g) || []).length, 2);
+});
+
+test('usage distribution renders proportional accessible RAM and root filesystem segments', () => {
+  const apps = [
+    { name: 'alpha', metrics: { current: { memoryBytes: 100 } }, storage: { containerRootFsBytes: 300 } },
+    { name: 'beta', metrics: { current: { memoryBytes: 300 } }, storage: { containerRootFsBytes: 100 } },
+  ];
+  const html = renderUsageDistribution(apps);
+  assert.match(html, /Current RAM[\s\S]*Total 400 B[\s\S]*alpha: 100 B \(25\.0% of total\)[\s\S]*beta: 300 B \(75\.0% of total\)/);
+  assert.match(html, /Root filesystem[\s\S]*Total 400 B[\s\S]*alpha: 300 B \(75\.0% of total\)[\s\S]*beta: 100 B \(25\.0% of total\)/);
+  assert.equal((html.match(/role="img" tabindex="0"/g) || []).length, 4);
+  assert.match(html, /--segment-width:25\.000000%/);
+  const colors = [...html.matchAll(/--segment-color:(hsl\([^)]+\))/g)].map(match => match[1]);
+  assert.deepEqual(colors, [colors[0], colors[1], colors[0], colors[1]]);
+  assert.notEqual(colors[0], colors[1]);
+  assert.doesNotMatch(html, /cacheBytes|diskWritableBytes/);
+});
+
+test('usage distribution handles unavailable and zero totals without invalid segments', () => {
+  const html = renderUsageDistribution([
+    { name: 'zero', metrics: { current: { memoryBytes: 0 } }, storage: {} },
+    { name: 'missing', metrics: {}, storage: {} },
+  ]);
+  assert.match(html, /Current RAM[\s\S]*Total 0 B[\s\S]*No usage/);
+  assert.match(html, /Root filesystem[\s\S]*Total Unavailable[\s\S]*No data/);
+  assert.doesNotMatch(html, /usage-segment|NaN|Infinity/);
+});
+
+test('rendered app list places usage distribution before project cards', () => {
+  const html = renderApps([{ name: 'alpha', status: 'running', metrics: {}, storage: {} }]);
+  assert.ok(html.indexOf('usage-distribution') < html.indexOf('apps-grid'));
 });
 
 test('app card links its name and keeps uptime in the heading without a raw URL footer', () => {
